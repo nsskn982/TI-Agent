@@ -1,0 +1,66 @@
+name: Daily ingest (M1 + M2)
+
+on:
+  schedule:
+    - cron: "30 22 * * 1-5"   # 22:30 UTC weekdays, after US close
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback window in days (730 for a backfill)"
+        default: "5"
+      tickers:
+        description: "Space-separated tickers (blank = watchlist.txt)"
+        default: ""
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-minilm-v1
+
+      - name: Test
+        run: pytest -q
+
+      - name: Ingest
+        id: ingest
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days || '5' }}
+          INPUT_TICKERS: ${{ github.event.inputs.tickers }}
+        run: |
+          if [ -n "$INPUT_TICKERS" ]; then
+            python -m ingestion.run --days "$INPUT_DAYS" --tickers $INPUT_TICKERS
+          else
+            python -m ingestion.run --days "$INPUT_DAYS"
+          fi
+
+      # Embed whatever did arrive, even if one source failed.
+      - name: Process + embed
+        if: success() || steps.ingest.outcome == 'failure'
+        run: python -m processing.run

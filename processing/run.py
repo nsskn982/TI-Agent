@@ -1,0 +1,104 @@
+"""M2 processing: clean -> chunk -> embed -> store, for every unprocessed document.
+
+    python -m processing.run
+    python -m processing.run --max-docs 50
+
+Re-running is safe: a document's chunks are replaced, and documents that fail
+are flagged with process_error so they are not retried forever.
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import datetime, timezone
+
+from common import logging_setup
+from common.text import normalize
+from processing.chunk import chunk_text
+
+log = logging.getLogger("processing")
+
+
+def build_chunks(doc: dict, embedder) -> list[dict]:
+    body = normalize(doc.get("body") or "")
+    title = normalize(doc.get("title") or "")
+    if doc["source"] == "news":
+        # News is headline + short summary: keep it as one chunk.
+        pieces = [f"{title}\n{body}".strip()]
+    else:
+        pieces = chunk_text(body)
+    pieces = [p for p in pieces if p]
+    if not pieces:
+        return []
+
+    # Prefix with context so a chunk embeds as "AAPL 10-K ..." rather than floating text.
+    header = f"{doc['ticker']} {doc.get('doc_type') or doc['source']}"
+    vectors = embedder.encode([f"{header}: {p}" for p in pieces])
+    return [
+        {
+            "document_id": doc["id"],
+            "ticker": doc["ticker"],
+            "source": doc["source"],
+            "doc_type": doc.get("doc_type"),
+            "published_at": doc["published_at"],
+            "chunk_index": i,
+            "content": p,
+            "embedding": v,
+        }
+        for i, (p, v) in enumerate(zip(pieces, vectors))
+    ]
+
+
+def process(store, embedder, max_docs: int | None = None, batch_size: int = 25) -> dict:
+    stats = {"documents": 0, "chunks": 0, "failed": 0, "errors": []}
+    while max_docs is None or stats["documents"] + stats["failed"] < max_docs:
+        limit = batch_size if max_docs is None else min(batch_size, max_docs - stats["documents"] - stats["failed"])
+        docs = store.fetch_unprocessed(limit)
+        if not docs:
+            break
+        for doc in docs:
+            try:
+                rows = build_chunks(doc, embedder)
+                store.replace_chunks(doc["id"], rows)
+                store.mark_processed(doc["id"], datetime.now(timezone.utc).isoformat())
+                stats["documents"] += 1
+                stats["chunks"] += len(rows)
+            except Exception as exc:
+                log.exception("Document %s failed", doc.get("id"))
+                msg = f"{type(exc).__name__}: {exc}"
+                store.mark_failed(doc["id"], msg)
+                stats["failed"] += 1
+                stats["errors"].append({"document_id": doc.get("id"), "error": msg[:500]})
+        log.info("Progress: %d docs, %d chunks, %d failed", stats["documents"], stats["chunks"], stats["failed"])
+    return stats
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging_setup.setup()
+    p = argparse.ArgumentParser(description="TI Agent processing + embedding (M2)")
+    p.add_argument("--max-docs", type=int, default=None)
+    args = p.parse_args(argv)
+
+    from common.store import Store
+    from processing.embed import Embedder
+
+    started = datetime.now(timezone.utc)
+    store = Store()
+    stats = process(store, Embedder(), args.max_docs)
+    status = "ok" if not stats["failed"] else ("error" if not stats["documents"] else "partial")
+    log.info("Done: status=%s %s", status, {k: v for k, v in stats.items() if k != "errors"})
+    store.log_run(
+        {
+            "job": "processing",
+            "started_at": started.isoformat(),
+            "status": status,
+            "counts": {"documents": stats["documents"], "chunks": stats["chunks"], "failed": stats["failed"]},
+            "errors": stats["errors"],
+        }
+    )
+    return 0 if status == "ok" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
