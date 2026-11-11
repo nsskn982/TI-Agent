@@ -38,6 +38,12 @@ grant all on all sequences in schema public to service_role;
 grant execute on all functions in schema public to service_role;
 grant select on tickers, prices, suggestions, portfolio_runs, performance to authenticated;
 
+-- App users are viewers. RLS already blocks their writes (no write policies), but Supabase's
+-- default privileges still grant the API roles INSERT/UPDATE/DELETE. Revoke them as a second
+-- layer, so a future policy mistake can't open writes.
+revoke insert, update, delete, truncate on all tables in schema public from anon, authenticated;
+alter default privileges in schema public revoke insert, update, delete, truncate on tables from anon, authenticated;
+
 -- Retrieval functions are for the service role only.
 revoke execute on function match_chunks(vector, timestamptz, int, text, text) from public, anon, authenticated;
 revoke execute on function keyword_chunks(text, timestamptz, int, text, text) from public, anon, authenticated;
