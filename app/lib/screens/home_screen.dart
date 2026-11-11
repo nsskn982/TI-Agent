@@ -90,9 +90,11 @@ class _Hero extends StatelessWidget {
       start: 0.0, // at rest the hero's top is at the top of the viewport: progress 0
       end: -0.5, // fully faded once its top has scrolled half a screen above the viewport
       rest: 0.0, // with reduce-motion on, keep the hero fully visible
-      builder: (context, t) => SizedBox(
-        height: height.clamp(420.0, 760.0).toDouble(),
-        child: Stack(children: [
+      // At least most of a screen tall, but free to grow: on small phones (or large text settings)
+      // the title, text and stats wrap onto more lines than a fixed height could hold.
+      builder: (context, t) => ConstrainedBox(
+        constraints: BoxConstraints(minHeight: height.clamp(360.0, 760.0).toDouble()),
+        child: Stack(alignment: AlignmentDirectional.centerStart, children: [
           Positioned.fill(child: _Orbs(t)),
           Opacity(
             opacity: (1 - t * 1.2).clamp(0.0, 1.0).toDouble(),
@@ -100,7 +102,7 @@ class _Hero extends StatelessWidget {
               offset: Offset(0, -70 * t),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
                     children: [
                   Text(
                     run == null ? 'WEEKLY RESEARCH' : 'WEEKLY RESEARCH · AS OF ${run.asOf} · RUN #${run.id}',
@@ -250,8 +252,14 @@ class _Tile extends StatelessWidget {
         ? const SizedBox.shrink()
         : Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(label, style: TextStyle(fontSize: 13, color: TiColors.ink2(context))),
+            child: Row(children: [
+              Expanded(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: TiColors.ink2(context))),
+              ),
+              const SizedBox(width: 6),
               StanceBadge(s.stance),
             ]),
           );
@@ -330,13 +338,11 @@ class _TickerScene extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         if (wide)
-          IntrinsicHeight(
-            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Expanded(child: medium ?? const SizedBox.shrink()),
-              const SizedBox(width: 16),
-              Expanded(child: long ?? const SizedBox.shrink()),
-            ]),
-          )
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: medium ?? const SizedBox.shrink()),
+            const SizedBox(width: 16),
+            Expanded(child: long ?? const SizedBox.shrink()),
+          ])
         else ...[
           if (medium != null) medium,
           const SizedBox(height: 14),

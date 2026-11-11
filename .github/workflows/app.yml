@@ -42,7 +42,13 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
       - name: Test
-        run: flutter test
+        run: |
+          set +e
+          flutter test --reporter json > test-results.jsonl
+          code=$?
+          # Failures become annotations on the run page (readable without the raw log).
+          python3 tool/annotate_tests.py test-results.jsonl
+          exit $code
 
   web:
     needs: check
