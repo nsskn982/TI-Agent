@@ -26,15 +26,35 @@ class Suggestion(BaseModel):
     horizon: Literal["medium", "long"]
     stance: Literal["bullish", "neutral", "bearish"]
     thesis: str = Field(min_length=40, max_length=1200)
+    # Deeper write-up (added for the S&P 500 + 400 picks): each part is cited by `sources`
+    # and goes through the same number check as the thesis.
+    bull_case: str = Field(min_length=40, max_length=900)
+    bear_case: str = Field(min_length=40, max_length=900)
+    catalysts: list[str] = Field(min_length=1, max_length=4)
+    valuation: str = Field(min_length=20, max_length=600)
     risks: list[str] = Field(min_length=1, max_length=5)
     sources: list[str] = Field(min_length=1, max_length=8)
     confidence: float = Field(ge=0, le=1)
     as_of: date
 
-    @field_validator("thesis")
+    @field_validator("thesis", "bull_case", "bear_case", "valuation")
     @classmethod
-    def _thesis(cls, v: str) -> str:
-        return _english(v, "thesis")
+    def _prose(cls, v: str, info) -> str:
+        return _english(v, info.field_name)
+
+    @field_validator("catalysts")
+    @classmethod
+    def _catalysts(cls, v: list[str]) -> list[str]:
+        v = [_english(c.strip(), "each catalyst") for c in v if c and c.strip()]
+        if not v:
+            raise ValueError("at least one catalyst is required")
+        if any(len(c) > 250 for c in v):
+            raise ValueError("each catalyst must be at most 250 characters")
+        return v
+
+    def text_for_checks(self) -> str:
+        """Everything the model wrote, for the number-grounding check."""
+        return " ".join([self.thesis, self.bull_case, self.bear_case, self.valuation, *self.catalysts, *self.risks])
 
     @field_validator("risks")
     @classmethod

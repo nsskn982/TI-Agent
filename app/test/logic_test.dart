@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ti_agent/config.dart';
 import 'package:ti_agent/data.dart';
 import 'package:ti_agent/models.dart';
+import 'package:ti_agent/screens/compare_screen.dart';
 import 'package:ti_agent/widgets/contact.dart';
 
 import 'fake_data.dart';
@@ -87,6 +88,24 @@ void main() {
       final home = await loadHome(_BrokenScreen());
       expect(home.cards.map((c) => c.ticker), ['AAPL', 'MSFT']);
       expect(home.stats.screened, 0);
+    });
+
+    test('compare sorting puts missing values last in both directions', () {
+      TickerViews card(String t, double? pe) =>
+          TickerViews(t, pick: ScreenPick(ticker: t, rank: 1, metrics: {if (pe != null) 'pe_ttm': pe}));
+      final cards = [card('A', 20), card('B', null), card('C', 35)];
+      final pe = compareColumns.firstWhere((c) => c.label == 'P/E');
+      expect(sortCards(cards, const {}, pe, true).map((c) => c.ticker), ['A', 'C', 'B']);
+      expect(sortCards(cards, const {}, pe, false).map((c) => c.ticker), ['C', 'A', 'B']);
+    });
+
+    test('daily quote moves', () {
+      final q = Quote.fromSeries([
+        for (var i = 0; i < 7; i++) PricePoint(DateTime(2026, 11, 2 + i), 100.0 + i),
+      ])!;
+      expect(q.close, 106);
+      expect(q.dayChange, closeTo(106 / 105 - 1, 1e-9));
+      expect(q.weekChange, closeTo(106 / 101 - 1, 1e-9));
     });
 
     test('percent formatting', () {

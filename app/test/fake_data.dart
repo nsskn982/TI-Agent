@@ -70,4 +70,10 @@ class FakeData implements DataSource {
 
   @override
   Future<ScreenResult> latestScreen() async => screen;
+
+  @override
+  Future<Map<String, Quote>> latestQuotes(List<String> tickers) async => {
+        for (final t in tickers)
+          t: Quote(date: DateTime(2026, 11, 11), close: 110, prevClose: 100, weekAgoClose: 88),
+      };
 }

@@ -1,4 +1,4 @@
-"""Weekly S&P 500 screen: momentum among quality companies.
+"""Weekly screen of the S&P 500 + S&P MidCap 400: momentum among quality companies.
 
 Every constituent gets cheap, code-computed metrics; the top N by score are "selected" and
 only those go through news/filings retrieval and the LLM agent.
@@ -59,15 +59,22 @@ def momentum_metrics(close: pd.Series, bench: pd.Series | None) -> dict | None:
         rel3 = (1 + r3) / (1 + b3) - 1 if r3 is not None and b3 is not None else None
     daily = np.log(close).diff().dropna().tail(126)
     vol = float(daily.std() * math.sqrt(252)) if len(daily) > 20 else None
+    year = close.tail(252)
     return {
         "mom_12_1": mom,
         "ret_12m": _ret(close, 252),
         "ret_6m": r6,
         "ret_3m": r3,
+        "ret_1m": _ret(close, 21),
         "rel_6m": rel6,
         "rel_3m": rel3,
         "vol_6m": vol,
         "last_close": float(close.iloc[-1]),
+        # Levels traders watch day to day (facts about the price, not targets).
+        "high_52w": float(year.max()),
+        "low_52w": float(year.min()),
+        "sma_50": float(close.tail(50).mean()),
+        "sma_200": float(close.tail(200).mean()),
     }
 
 
@@ -124,9 +131,17 @@ def score_candidates(cands: list[dict], top_n: int = TOP_N) -> list[dict]:
     return cands
 
 
+PRICE_KEYS = ("mom_12_1", "ret_12m", "ret_6m", "ret_3m", "ret_1m", "rel_6m", "rel_3m", "vol_6m",
+              "last_close", "high_52w", "low_52w", "sma_50", "sma_200")
+FUND_KEYS = ("net_margin", "operating_margin", "fcf_ttm", "fcf_yield", "pe_ttm", "market_cap",
+             "revenue_growth_yoy", "debt_to_equity")
+
+
 def run_screen(store, tickers: list[str], as_of: date, bench_symbol: str, top_n: int = TOP_N,
-               sectors: dict[str, str] | None = None) -> list[dict]:
-    """Screen `tickers` as of `as_of` (data strictly before it). Returns rows for `screens`."""
+               info: dict[str, dict] | None = None) -> list[dict]:
+    """Screen `tickers` as of `as_of` (data strictly before it). Returns rows for `screens`.
+    `info` maps ticker -> {"sector", "index"} (stored in metrics for the app)."""
+    info = info or {}
     start = as_of - timedelta(days=LOOKBACK_DAYS)
     bench = close_series(store.get_prices(bench_symbol, start, as_of))
     cands = []
@@ -134,23 +149,17 @@ def run_screen(store, tickers: list[str], as_of: date, bench_symbol: str, top_n:
         close = close_series(store.get_prices(t, start, as_of))
         mom = momentum_metrics(close, bench) or {}
         f = fund.fundamental_features(store.get_fundamentals(t, as_of), as_of, mom.get("last_close"))
-        ok, notes = quality_check(f, (sectors or {}).get(t))
-        metrics = {
-            **{k: mom.get(k) for k in ("mom_12_1", "ret_12m", "ret_6m", "ret_3m", "rel_6m", "rel_3m", "vol_6m")},
-            "net_margin": f.get("net_margin"),
-            "fcf_ttm": f.get("fcf_ttm"),
-            "fcf_yield": f.get("fcf_yield"),
-            "market_cap": f.get("market_cap"),
-            "revenue_growth_yoy": f.get("revenue_growth_yoy"),
-        }
+        ok, notes = quality_check(f, (info.get(t) or {}).get("sector"))
+        metrics = {**{k: mom.get(k) for k in PRICE_KEYS}, **{k: f.get(k) for k in FUND_KEYS}}
         cands.append({"ticker": t, "quality_pass": ok, "notes": notes, "metrics": metrics})
 
     score_candidates(cands, top_n)
     rows = []
     for c in cands:
         metrics = {**c["metrics"], "notes": c.get("notes", [])}
-        if sectors and sectors.get(c["ticker"]):
-            metrics["sector"] = sectors[c["ticker"]]
+        for k in ("sector", "index"):
+            if (info.get(c["ticker"]) or {}).get(k):
+                metrics[k] = info[c["ticker"]][k]
         rows.append(clean({
             "as_of": as_of.isoformat(),
             "ticker": c["ticker"],

@@ -1,6 +1,6 @@
 # TI Agent — Trading Intelligence
 
-An agentic, retrieval-augmented AI that screens the whole **S&P 500** every week and produces **medium-term (1–3 months)** and **long-term (6–24 months)** trading suggestions for the **top 20** picks, grounded in news, SEC filings, macro data and price history — built entirely on **free tools**, with a **quantum computing** research layer planned for portfolio optimization.
+An agentic, retrieval-augmented AI that screens about 900 US stocks every week (the **S&P 500** large caps plus the **S&P MidCap 400**). For the **top 20** picks it produces a full **medium-term (1–3 months)** and **long-term (6–24 months)** analysis (thesis, bull and bear case, catalysts, valuation, risks), grounded in news, SEC filings, macro data and price history — built entirely on **free tools**, with a **quantum computing** research layer planned for portfolio optimization.
 
 > **Disclaimer:** TI Agent is a research and learning project. Its output is not financial advice. It never places trades. Use at your own risk.
 
@@ -12,7 +12,7 @@ An agentic, retrieval-augmented AI that screens the whole **S&P 500** every week
 |---|---|
 | P1 Foundations: daily ingestion and processing | Built. 2-year backfill loaded with 0 errors. Gate: 7 clean daily runs, earliest **2026-11-19** |
 | P2 Knowledge: quant engine, hybrid retrieval | Built. **Gate passed** (10/10 test queries relevant with rerank) |
-| S&P 500 screen: momentum among quality companies, top 20 | Built. Runs in GitHub Actions on Fridays; the daily ingest and the weekly agent then work on the picks |
+| Stock screen (S&P 500 + MidCap 400): momentum among quality companies, top 20 | Built. Runs in GitHub Actions on Fridays; the daily ingest and the weekly agent then work on the picks. **Not run yet**: start it once by hand (see below) |
 | P3 Agent: weekly LLM run | Built. **1 of 4** clean weekly runs done (5 tickers, 10 cited suggestions) |
 | App (Flutter: web, Android, iOS) | Code written. GitHub Actions will compile, test and publish the web version to GitHub Pages on the next push |
 | Django dashboard | Built. Local tool for the owner (pipeline status, computed features) |
@@ -22,7 +22,7 @@ An agentic, retrieval-augmented AI that screens the whole **S&P 500** every week
 
 ## What it does
 
-1. **Screens** all ~503 S&P 500 stocks weekly: momentum (12-1 month, vs S&P 500) among profitable, cash-generating companies, and keeps the top 20.
+1. **Screens** ~900 stocks weekly (S&P 500 large caps + S&P MidCap 400): momentum (12-1 month, vs S&P 500) among profitable, cash-generating companies, and keeps the top 20.
 2. **Collects** news, filings, macro series and prices for the picks every weekday.
 3. **Indexes** text into a vector store, tagged by ticker, date and source.
 4. **Reasons** with a local LLM agent that calls tools to gather evidence for each ticker.
@@ -34,8 +34,8 @@ An agentic, retrieval-augmented AI that screens the whole **S&P 500** every week
 ## Architecture
 
 ```
-GitHub Actions (cloud, Fridays 23:30 UTC): S&P 500 screen
-  Wikipedia constituents · yfinance prices · SEC XBRL fundamentals (all ~503)
+GitHub Actions (cloud, Fridays 23:30 UTC): stock screen
+  Wikipedia constituents · yfinance prices · SEC XBRL fundamentals (S&P 500 + MidCap 400, ~900)
   → momentum among quality companies → top 20 → Supabase "screens"
   → backfill news + filings for new picks
 
@@ -116,7 +116,7 @@ Every suggestion is validated JSON. `ticker` and `as_of` are set by code, never 
 TI-Agent/
 ├── .github/workflows/
 │   ├── ingest.yml          # M1 + M2 for the picks, weekdays
-│   ├── screen.yml          # S&P 500 screen, Fridays
+│   ├── screen.yml          # stock screen (S&P 500 + MidCap 400), Fridays
 │   └── app.yml             # Flutter: test, web (GitHub Pages), APK
 ├── common/                 # config, HTTP, Supabase store, logging
 ├── ingestion/              # M1
@@ -168,7 +168,7 @@ copy .env.example .env          # fill in SUPABASE_URL, SUPABASE_SERVICE_KEY, FI
 
 # 5. Load data. Before the first S&P 500 screen, watchlist.txt sets the tickers; afterwards the
 #    latest top-20 picks do (--tickers always overrides).
-python -m orchestration.screen_run    # S&P 500 screen: ~45 min the first time (also runs Fridays in Actions)
+python -m orchestration.screen_run    # stock screen: ~1.5 h the first time (also runs Fridays in Actions)
 python -m ingestion.run --days 730    # first run: ~2-year backfill
 python -m processing.run              # chunk, embed, score news
 python -m pytest -q                   # offline tests, no keys needed
@@ -178,7 +178,7 @@ python -m retrieval.evaluate --rerank
 ```
 
 Weekly agent run (Phase 3): double-click **`run_weekly.cmd`** in the repo folder. It starts Ollama if
-needed, runs this week's S&P 500 picks (about 20 min), and logs to `logs\weekly_run.log`. It also takes
+needed, analyses this week's top 20 picks (about 30 min), and logs to `logs\weekly_run.log`. It also takes
 options, e.g. `run_weekly.cmd --tickers AAPL --no-telegram`. Or, from a terminal:
 
 ```powershell
@@ -222,7 +222,7 @@ Set in `.env` (never commit it). The app's settings go in `app/config.json` inst
 | `FINNHUB_API_KEY`, `FRED_API_KEY`, `SEC_USER_AGENT` | Ingestion (EDGAR requires a contact email in the user agent) |
 | `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_THINK` | Agent (defaults: `http://localhost:11434`, `trading-analyst`, `16384`, `true`) |
 | `BENCHMARK` | Quant engine (default `SPY`) |
-| `SCREEN_TOP_N` | S&P 500 screen: how many picks get the full pipeline (default `20`) |
+| `SCREEN_TOP_N` | Stock screen: how many picks get the full pipeline (default `20`) |
 | `SENTIMENT_MODEL` | Processing (default FinBERT) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Weekly digest and alerts |
 | `QUANT_API_TOKEN` | Local API: empty = answer this machine only |
@@ -238,7 +238,7 @@ Set in `.env` (never commit it). The app's settings go in `app/config.json` inst
 |---|---|---|---|
 | P1 Foundations | Supabase schema, daily ingestion | 7 days of data without errors | In progress (earliest pass 2026-11-19) |
 | P2 Knowledge | Embeddings, quant engine, retrieval | Relevant chunks on 10 test queries | **Passed** |
-| P3 Agent | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON | 1 / 4 (from the next run: top 20 S&P 500 picks, ~20 min) |
+| P3 Agent | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON | 1 / 4 (after the first screen: top 20 picks, ~30 min) |
 | P4 App | Flutter app (web, Android, iOS) | Invite-only testers for 2 weeks | App written; web publish via GitHub Pages set up |
 | P5 Quantum + eval | QAOA, quantum kernel, scoring | Quantum vs classical benchmark report | Not started |
 
@@ -270,13 +270,24 @@ The dashboard runs on your own machine and isn't hosted; the Flutter app is what
 
 ## App (Flutter): web, Android, iOS
 
-[app/](app/) is the client everyone else uses: sign-in, the same scroll story of this week's suggestions,
-ticker charts, cited passages and the Contact links. One codebase for every platform:
+[app/](app/) is the client everyone else uses. After sign-in:
+
+- **Home:** this week's top 20 in rank order. Each pick shows its size (large/mid cap) and sector, plus the
+  figures a daily check needs: last close and day move, position vs its 50- and 200-day averages, distance
+  from its 52-week high, and P/E. Then come the screen's reasons (momentum, return vs the S&P 500,
+  volatility, net margin, free cash flow) and the AI's two views. Each view has a thesis, bull case, bear
+  case, valuation, catalysts to watch and risks, all cited.
+- **Compare:** all 20 picks in one table, sortable by any column (price, day/5-day/1-month move,
+  momentum, valuation, margins, growth, the AI's stances).
+- **Ticker page:** 12-month chart vs the S&P 500, history, and the cited passages.
+
+Prices refresh daily (weekday ingest), the picks and AI views weekly. It's research, not financial advice:
+no buy/sell price targets. One codebase for every platform:
 
 | Platform | Build | Delivery |
 |---|---|---|
 | Web | GitHub Actions ([app.yml](.github/workflows/app.yml)), on every push to `main` | GitHub Pages: `https://nsskn982.github.io/TI-Agent/` |
-| Android | `flutter build apk` | APK sent to invited testers |
+| Android | Same workflow (or `flutter build apk`) | Run page → Artifacts → `ti-agent-apk` |
 | iOS | `flutter build ipa` on a Mac | TestFlight (Apple Developer account) |
 
 It reads Supabase directly with the anon key and Supabase Auth, under the policies in

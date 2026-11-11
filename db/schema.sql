@@ -299,3 +299,12 @@ create table if not exists screens (
     primary key (as_of, ticker)
 );
 create index if not exists screens_selected_idx on screens (as_of desc, rank) where selected;
+
+-- Mid caps: the screen covers the S&P 500 + S&P MidCap 400.
+alter table tickers add column if not exists in_sp400 boolean not null default false;
+
+-- Deeper write-up per suggestion (bull/bear case, catalysts, valuation). Null on older rows.
+alter table suggestions add column if not exists bull_case text;
+alter table suggestions add column if not exists bear_case text;
+alter table suggestions add column if not exists catalysts jsonb not null default '[]'::jsonb;
+alter table suggestions add column if not exists valuation text;

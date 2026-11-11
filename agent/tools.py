@@ -66,12 +66,21 @@ TOOL_SPECS: list[dict] = [
                         "description": "medium = 1-3 months, long = 6-24 months"},
             "stance": {"type": "string", "enum": ["bullish", "neutral", "bearish"],
                        "description": "Expected performance relative to the benchmark"},
-            "thesis": {"type": "string", "description": "40-1200 characters, grounded in cited passages"},
+            "thesis": {"type": "string", "description": "2-4 sentences: the call and the main reason"},
+            "bull_case": {"type": "string", "description": "2-3 sentences: what has to go right, with evidence"},
+            "bear_case": {"type": "string", "description": "2-3 sentences: what could go wrong, with evidence"},
+            "catalysts": {"type": "array", "items": {"type": "string"},
+                          "description": "1-4 dated or specific events that could move the stock in this horizon "
+                                         "(earnings date, product launch, rate decision, regulation)"},
+            "valuation": {"type": "string",
+                          "description": "1-2 sentences on valuation using get_features numbers "
+                                         "(pe_ttm, fcf_yield, growth); say 'not available' if missing"},
             "risks": {"type": "array", "items": {"type": "string"}, "description": "1-5 key risks"},
             "sources": {"type": "array", "items": {"type": "string"},
                         "description": "chunk ids from search_knowledge supporting the thesis"},
             "confidence": {"type": "number", "description": "0-1; 0.5 means no edge"},
-        }, "required": ["horizon", "stance", "thesis", "risks", "sources", "confidence"]},
+        }, "required": ["horizon", "stance", "thesis", "bull_case", "bear_case", "catalysts", "valuation",
+                        "risks", "sources", "confidence"]},
     }},
 ]
 
@@ -189,7 +198,7 @@ class ToolContext:
         unseen = [c for c in s.sources if c not in self.seen_citations]
         if unseen:
             problems.append(f"sources {unseen} were not returned by search_knowledge in this session")
-        nums = unsupported_numbers(" ".join([s.thesis, *s.risks]), source_numbers(self.results_text))
+        nums = unsupported_numbers(s.text_for_checks(), source_numbers(self.results_text))
         if nums:
             problems.append(f"numbers {nums} do not match any tool output; use only tool values (e.g. 0.151 -> "
                             f"15.1%, 478834000000 -> $478.8B) or describe them in words")

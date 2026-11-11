@@ -118,10 +118,21 @@ Before the first publish:
 2. In Supabase, turn **off** public sign-ups and create users (see [security.md](security.md)).
 3. Add the `SUPABASE_ANON_KEY` repository secret, and set *Settings → Pages → Source* to *GitHub Actions*.
 
-## S&P 500 screen (added 2026-11-11)
+## Stock screen (added 2026-11-11, widened 2026-11-12)
 
-The watchlist is no longer hand-picked. Every Friday a GitHub Action screens the whole S&P 500 (503
-stocks) and keeps the **top 20**; see [architecture.md §5a](architecture.md#5a-weekly-sp-500-screen-quantscreenpy-orchestrationscreen_runpy).
+The watchlist is no longer hand-picked. Every Friday a GitHub Action screens the **S&P 500 + S&P MidCap
+400** (about 900 large- and mid-cap stocks) and keeps the **top 20**; see
+[architecture.md §5a](architecture.md#5a-weekly-stock-screen-quantscreenpy-orchestrationscreen_runpy).
+
+**2026-11-12 status:** the screen has **not run yet**. The `screens` table is empty, so last night's weekly
+run (#3) fell back to the 5 stocks in `watchlist.txt`. It must be started once by hand (below).
+
+**Deeper analysis (2026-11-12).** Each AI view now has a thesis, **bull case**, **bear case**, **catalysts**
+and a **valuation** view, as well as risks. All of it is cited, and every number in it is checked against the
+tool outputs. The app adds:
+- a **Compare** table of all picks, sortable by any column
+- daily figures per pick: last close and day move, position vs the 50- and 200-day averages, distance from
+  the 52-week high, P/E
 
 - **Score:** momentum among quality companies. Quality means profitable and cash-generating, from SEC
   financials. Momentum blends the 12-1 month return with 6- and 3-month returns vs the S&P 500, minus a
@@ -134,12 +145,17 @@ stocks) and keeps the **top 20**; see [architecture.md §5a](architecture.md#5a-
 - **Tests:** 14 new Python tests for parsing, the momentum maths, the quality filter, ranking,
   no-lookahead and the fallback; Dart tests for rank ordering.
 
-**Before the first screen:** re-run `db/schema.sql` (adds `screens` and the ticker columns) and then
-`db/rls.sql` (lets the app read `screens`). Then start the *Weekly S&P 500 screen* workflow by hand.
+**Before the first screen:** re-run `db/schema.sql` (adds `screens`, the ticker index columns and the
+write-up columns), then `db/rls.sql` (lets the app read `screens`). Then start the
+*Weekly stock screen (S&P 500 + MidCap 400)* workflow by hand.
 
-**Costs:** the weekly agent run goes from 5 tickers (~4 min) to 20 (~20 min). The first screen downloads
-about 2.5 GB of SEC data and backfills 20 tickers (~45–60 min in Actions). Later weeks only backfill new
-entrants.
+**Costs:**
+- **Weekly agent run:** goes from 5 tickers (~4 min) to 20 with the longer write-up (~30 min).
+- **First screen:** downloads about 4–5 GB of SEC data for ~900 companies and backfills 20 tickers
+  (~1.5–2 h in Actions; time limit 4 h).
+- **Later weeks:** only new entrants are backfilled.
+- **Database:** prices and fundamentals for 900 stocks add roughly 150 MB, which stays under the free
+  0.5 GB.
 
 ## Next steps
 

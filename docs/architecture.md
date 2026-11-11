@@ -135,14 +135,21 @@ for news volume this week against the previous 12 weeks.
 **API** ([api.py](../quant/api.py)), run with `uvicorn quant.api:app`. Dates in the future are rejected
 with HTTP 400, and an unknown ticker returns 404. All floats are rounded, and NaN/inf come back as `null`.
 
-## 5a. Weekly S&P 500 screen ([quant/screen.py](../quant/screen.py), [orchestration/screen_run.py](../orchestration/screen_run.py))
+## 5a. Weekly stock screen ([quant/screen.py](../quant/screen.py), [orchestration/screen_run.py](../orchestration/screen_run.py))
 
-Analysing all ~503 S&P 500 stocks with retrieval and the LLM doesn't fit the free tier: about a million
-text chunks (Supabase free is 0.5 GB), and about 7 hours of laptop GPU time per week. So the pipeline is a
+The universe is the **S&P 500** (large caps) plus the **S&P MidCap 400**, about 900 stocks. Small caps
+(S&P 600) are left out to keep the weekly SEC download and database size inside the free tiers.
+
+Analysing all of them with retrieval and the LLM doesn't fit the free tier: well over a million text chunks
+(Supabase free is 0.5 GB), and more than 10 hours of laptop GPU time per week. So the pipeline is a
 two-stage filter:
 
 1. **Screen everything, cheaply** (GitHub Actions, Fridays 23:30 UTC, [screen.yml](../.github/workflows/screen.yml)):
-   - Constituents come from Wikipedia's S&P 500 list, stored in Yahoo/SEC form (`BRK-B`).
+   - Constituents come from Wikipedia's S&P 500 and S&P 400 lists, stored in Yahoo/SEC form (`BRK-B`).
+     Each stock is tagged with its index (`in_sp500` / `in_sp400`); the S&P 400 list has no CIK, so CIKs
+     come from SEC's ticker map.
+   - Each pick's stored metrics also include the levels shown in the app's daily view: 52-week high and
+     low, 50- and 200-day averages, 1-month return, P/E and debt to equity.
    - About 800 days of prices are downloaded in batches of 100.
    - SEC XBRL fundamentals are fetched for every company.
    - The score is computed in code from data strictly before the as-of date.

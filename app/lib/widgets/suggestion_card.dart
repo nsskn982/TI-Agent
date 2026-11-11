@@ -89,7 +89,15 @@ class SuggestionCard extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(s.thesis, style: text.bodyLarge?.copyWith(height: 1.5)),
-        if (s.risks.isNotEmpty) ...[
+        if (s.bullCase != null)
+          _Section('Bull case', Icons.trending_up, body: s.bullCase, accent: TiColors.series1(context)),
+        if (s.bearCase != null)
+          _Section('Bear case', Icons.trending_down,
+              body: s.bearCase, accent: TiColors.stance(context, Stance.bearish)),
+        if (s.valuation != null) _Section('Valuation', Icons.balance, body: s.valuation),
+        if (s.catalysts.isNotEmpty) _Section('Catalysts to watch', Icons.event, items: s.catalysts),
+        if (s.risks.isNotEmpty && s.hasWriteUp) _Section('Risks', Icons.warning_amber_rounded, items: s.risks),
+        if (s.risks.isNotEmpty && !s.hasWriteUp) ...[
           const SizedBox(height: 10),
           for (final r in s.risks)
             Padding(
@@ -118,6 +126,43 @@ class SuggestionCard extends StatelessWidget {
                 ),
           ]),
         ],
+      ]),
+    );
+  }
+}
+
+/// One labelled part of the write-up: a paragraph or a bullet list.
+class _Section extends StatelessWidget {
+  const _Section(this.label, this.icon, {this.body, this.items = const [], this.accent});
+
+  final String label;
+  final IconData icon;
+  final String? body;
+  final List<String> items;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final ink2 = TiColors.ink2(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 16, color: accent ?? ink2),
+          const SizedBox(width: 6),
+          Text(label, style: text.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
+        ]),
+        const SizedBox(height: 4),
+        if (body != null) Text(body!, style: text.bodyMedium?.copyWith(height: 1.5, color: ink2)),
+        for (final i in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('•  ', style: TextStyle(color: ink2)),
+              Expanded(child: Text(i, style: text.bodyMedium?.copyWith(color: ink2))),
+            ]),
+          ),
       ]),
     );
   }

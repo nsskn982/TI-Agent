@@ -72,12 +72,20 @@ def first_citation(messages):
     raise AssertionError("no search result in conversation")
 
 
+WRITE_UP = dict(
+    bull_case="Guidance was raised and demand came in above expectations, so estimates may move higher.",
+    bear_case="The stock already prices in strong demand; any slowdown in orders would hurt sentiment.",
+    catalysts=["Next quarterly earnings report", "Product launch event"],
+    valuation="Valuation looks full versus history but is supported by strong cash generation.",
+)
+
+
 def save(horizon, cite=True, thesis=None, **extra):
     def reply(messages):
         sources = [first_citation(messages)] if cite else ["chunk_999999"]
         return call("save_suggestion", horizon=horizon, stance="bullish",
                     thesis=thesis or "Demand came in above expectations and guidance was raised, per the cited news.",
-                    risks=["Valuation", "Macro slowdown"], sources=sources, confidence=0.6, **extra)
+                    risks=["Valuation", "Macro slowdown"], sources=sources, confidence=0.6, **{**WRITE_UP, **extra})
     return reply
 
 
@@ -367,9 +375,25 @@ def test_non_english_text_is_rejected_so_the_model_rewrites_it():
     from pydantic import ValidationError
     from agent.schema import Suggestion
     base = dict(ticker="AAPL", horizon="long", stance="neutral", sources=["chunk_1"], confidence=0.55,
-                as_of="2026-11-11", thesis="Fundamentals remain solid with steady services growth and buybacks.")
+                as_of="2026-11-11", thesis="Fundamentals remain solid with steady services growth and buybacks.",
+                **WRITE_UP)
     Suggestion(**base, risks=["AI adoption slower than expected"])
     with _pt.raises(ValidationError, match="English"):
         Suggestion(**base, risks=["AI adoption不及预期"])
     with _pt.raises(ValidationError, match="English"):
         Suggestion(**{**base, "thesis": base["thesis"] + " 增长强劲。"}, risks=["Valuation"])
+
+
+
+def test_write_up_fields_are_required_and_number_checked(store):
+    from agent.schema import Suggestion
+    import pytest as _pt
+    from pydantic import ValidationError
+    base = dict(ticker="AAPL", horizon="long", stance="neutral", sources=["chunk_1"], confidence=0.55,
+                as_of="2026-11-11", thesis="Fundamentals remain solid with steady services growth and buybacks.",
+                risks=["Valuation"])
+    with _pt.raises(ValidationError, match="bull_case"):
+        Suggestion(**base)
+    s = Suggestion(**base, **{**WRITE_UP, "valuation": "Trades at 99.9x earnings, far above peers."})
+    assert "99.9x" in s.text_for_checks()            # the valuation text goes through the number check
+    assert s.to_row(1, "m")["catalysts"] == WRITE_UP["catalysts"]

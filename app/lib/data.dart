@@ -14,6 +14,9 @@ abstract class DataSource {
 
   /// The latest weekly S&P 500 screen (empty before the first screen has run).
   Future<ScreenResult> latestScreen();
+
+  /// Latest daily close and recent move for each ticker (last ~2 weeks of rows).
+  Future<Map<String, Quote>> latestQuotes(List<String> tickers);
 }
 
 class SupabaseDataSource implements DataSource {
@@ -94,6 +97,24 @@ class SupabaseDataSource implements DataSource {
   }
 
   @override
+  Future<Map<String, Quote>> latestQuotes(List<String> tickers) async {
+    if (tickers.isEmpty) return {};
+    final since = DateTime.now().subtract(const Duration(days: 16)).toIso8601String().substring(0, 10);
+    final rows = await db
+        .from('prices')
+        .select('ticker,date,close,adj_close')
+        .inFilter('ticker', tickers)
+        .gte('date', since)
+        .order('date', ascending: true);
+    final by = <String, List<PricePoint>>{};
+    for (final r in rows) {
+      final p = PricePoint.fromJson(r);
+      if (p != null) (by[r['ticker'].toString()] ??= []).add(p);
+    }
+    return {for (final e in by.entries) if (Quote.fromSeries(e.value) case final q?) e.key: q};
+  }
+
+  @override
   Future<ScreenResult> latestScreen() async {
     final latest = await db
         .from('screens')
@@ -136,12 +157,14 @@ class HomeStats {
 }
 
 class HomeData {
-  const HomeData({this.run, this.cards = const [], this.citations = const {}, this.stats = const HomeStats()});
+  const HomeData(
+      {this.run, this.cards = const [], this.citations = const {}, this.stats = const HomeStats(), this.quotes = const {}});
 
   final AgentRun? run;
   final List<TickerViews> cards;
   final Map<int, Citation> citations;
   final HomeStats stats;
+  final Map<String, Quote> quotes; // latest daily close per ticker
 }
 
 /// Tags each view as new, changed or unchanged against the previous run's stances.
@@ -186,10 +209,17 @@ Future<HomeData> loadHome(DataSource ds) async {
     screen = const ScreenResult(); // no screen yet (or table not created): plain alphabetical list
   }
   final cards = groupByTicker(rows, screen.picks);
+  Map<String, Quote> quotes;
+  try {
+    quotes = await ds.latestQuotes([for (final c in cards) c.ticker]);
+  } catch (_) {
+    quotes = const {}; // prices are a bonus; never block the suggestions
+  }
   return HomeData(
     run: run,
     cards: cards,
     citations: cites,
+    quotes: quotes,
     stats: HomeStats(
       tickers: cards.length,
       views: rows.length,

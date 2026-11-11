@@ -1,6 +1,6 @@
-name: Weekly S&P 500 screen
+name: Weekly stock screen (S&P 500 + MidCap 400)
 
-# Screens the whole S&P 500 (prices + SEC fundamentals), picks the top N by momentum among
+# Screens the S&P 500 + S&P MidCap 400 (~900 stocks: prices + SEC fundamentals), picks the top N by momentum among
 # quality companies, and backfills news/filings for new picks. Runs Friday night after the
 # US close and the daily ingest, so the Saturday agent run on the laptop sees fresh picks.
 on:
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 240
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

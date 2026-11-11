@@ -46,6 +46,9 @@ class FakeStore:
     def sp500_symbols(self):
         return sorted(s for s, t in self.tickers.items() if t.get("in_sp500"))
 
+    def universe_symbols(self):
+        return sorted(s for s, t in self.tickers.items() if t.get("in_sp500") or t.get("in_sp400"))
+
     def upsert_screens(self, rows):
         if not hasattr(self, "screens"):
             self.screens = {}

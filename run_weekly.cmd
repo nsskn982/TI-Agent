@@ -34,7 +34,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo   TI Agent weekly run - AI suggestions for this week's S^&P 500 picks (about 20 min)
+echo   TI Agent weekly run - AI analysis of this week's top 20 picks (about 30 min)
 echo   Tip: close your browser first; the model needs about 5 GB of free memory.
 echo.
 

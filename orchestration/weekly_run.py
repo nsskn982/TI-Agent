@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tickers", nargs="*")
     p.add_argument("--as-of", type=date.fromisoformat, default=date.today(),
                    help="Backtest date. The LLM's own training data may still leak hindsight.")
-    p.add_argument("--max-steps", type=int, default=12)
+    p.add_argument("--max-steps", type=int, default=16)  # room for the longer write-up and one or two fixes
     p.add_argument("--no-telegram", action="store_true")
     args = p.parse_args(argv)
 

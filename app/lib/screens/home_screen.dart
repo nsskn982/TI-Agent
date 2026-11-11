@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/contact.dart';
 import '../widgets/scroll_scrub.dart';
 import '../widgets/suggestion_card.dart';
+import 'compare_screen.dart';
 import 'ticker_screen.dart';
 
 /// This week's suggestions as a scroll story: a hero that fades away, an at-a-glance grid,
@@ -61,9 +62,9 @@ class _HomeScreenState extends State<HomeScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
                 SliverToBoxAdapter(child: _Hero(home)),
-                if (home.cards.isNotEmpty) SliverToBoxAdapter(child: _Overview(home)),
+                if (home.cards.isNotEmpty) SliverToBoxAdapter(child: _Overview(home, widget.data)),
                 for (final (i, c) in home.cards.indexed)
-                  SliverToBoxAdapter(child: _TickerScene(c, i, home.cards.length, home.citations, widget.data)),
+                  SliverToBoxAdapter(child: _TickerScene(c, i, home.cards.length, home.citations, widget.data, home.quotes[c.ticker])),
                 const SliverToBoxAdapter(child: _ContactScene()),
                 const SliverToBoxAdapter(child: _Disclaimer()),
               ],
@@ -207,9 +208,10 @@ class _Stat extends StatelessWidget {
 }
 
 class _Overview extends StatelessWidget {
-  const _Overview(this.home);
+  const _Overview(this.home, this.data);
 
   final HomeData home;
+  final DataSource data;
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +242,13 @@ class _Overview extends StatelessWidget {
               ),
           ]);
         }),
+        const SizedBox(height: 20),
+        FilledButton.tonalIcon(
+          onPressed: () => Navigator.of(context)
+              .push(MaterialPageRoute<void>(builder: (_) => CompareScreen(home: home, data: data))),
+          icon: const Icon(Icons.table_chart_outlined),
+          label: Text('Compare all ${home.cards.length} side by side'),
+        ),
       ]),
     );
   }
@@ -295,12 +304,13 @@ class _Tile extends StatelessWidget {
 }
 
 class _TickerScene extends StatelessWidget {
-  const _TickerScene(this.c, this.index, this.count, this.citations, this.data);
+  const _TickerScene(this.c, this.index, this.count, this.citations, this.data, this.quote);
 
   final TickerViews c;
   final int index, count;
   final Map<int, Citation> citations;
   final DataSource data;
+  final Quote? quote;
 
   @override
   Widget build(BuildContext context) {
@@ -345,7 +355,7 @@ class _TickerScene extends StatelessWidget {
             ),
           ),
         ),
-        if (c.pick != null) ...[const SizedBox(height: 12), _PickFacts(c.pick!)],
+        if (c.pick != null) ...[const SizedBox(height: 12), _PickFacts(c.pick!, quote)],
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
@@ -450,9 +460,10 @@ class _Message extends StatelessWidget {
 
 /// Why a stock made the list: the screen's own numbers (computed in code, not by the LLM).
 class _PickFacts extends StatelessWidget {
-  const _PickFacts(this.pick);
+  const _PickFacts(this.pick, this.quote);
 
   final ScreenPick pick;
+  final Quote? quote;
 
   @override
   Widget build(BuildContext context) {
@@ -469,7 +480,24 @@ class _PickFacts extends StatelessWidget {
           ]),
         );
     final fcf = pick.metric('fcf_ttm');
+    final price = quote?.close ?? pick.metric('last_close');
+    String vs(String level) {
+      final l = pick.metric(level);
+      return price == null || l == null || l == 0 ? '–' : fmtPct(price / l - 1);
+    }
+
+    final day = quote?.dayChange;
+    final pe = pick.metric('pe_ttm');
     return Wrap(spacing: 8, runSpacing: 8, children: [
+      // Today: the facts a daily check starts with.
+      if (price != null)
+        fact('Last close${quote != null ? ' (${quote!.date.toIso8601String().substring(5, 10)})' : ''}',
+            '\$${price.toStringAsFixed(2)}${day != null ? '  ${day >= 0 ? '+' : ''}${(day * 100).toStringAsFixed(1)}%' : ''}'),
+      fact('vs 50-day avg', vs('sma_50')),
+      fact('vs 200-day avg', vs('sma_200')),
+      fact('From 52-week high', vs('high_52w')),
+      fact('P/E (TTM)', pe == null ? 'n/a' : pe.toStringAsFixed(1)),
+      // Why it was picked.
       fact('Momentum (12-1 mo)', fmtPct(pick.metric('mom_12_1'))),
       fact('vs S&P 500, 6 mo', fmtPct(pick.metric('rel_6m'))),
       fact('vs S&P 500, 3 mo', fmtPct(pick.metric('rel_3m'))),

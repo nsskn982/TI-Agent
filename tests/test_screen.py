@@ -25,6 +25,16 @@ def test_parse_constituents_normalises_symbols():
     assert universe.to_finnhub_symbol("BRK-B") == "BRK.B"
 
 
+def test_universe_merges_both_indexes(monkeypatch):
+    lists = {"S&P 500": [{"symbol": "AAA", "name": "A", "sector": "Tech", "cik": 1, "index": "S&P 500"},
+                         {"symbol": "BOTH", "name": "B", "sector": "Tech", "cik": 2, "index": "S&P 500"}],
+             "S&P 400": [{"symbol": "MID", "name": "M", "sector": "Energy", "cik": None, "index": "S&P 400"},
+                         {"symbol": "BOTH", "name": "B", "sector": "Tech", "cik": None, "index": "S&P 400"}]}
+    monkeypatch.setattr(universe, "fetch_index", lambda name, session=None: lists[name])
+    got = {r["symbol"]: r["index"] for r in universe.fetch_universe()}
+    assert got == {"AAA": "S&P 500", "BOTH": "S&P 500", "MID": "S&P 400"}
+
+
 def test_parse_constituents_rejects_a_changed_page():
     with pytest.raises(ValueError):
         universe.parse_constituents(_wiki_html(n=30))
@@ -110,9 +120,13 @@ def test_run_screen_end_to_end_with_point_in_time_data(monkeypatch):
     monkeypatch.setattr(store, "get_fundamentals", lambda t, before: calls.append(t) or orig_get(t, before))
     monkeypatch.setattr(screen.fund, "fundamental_features", fake_fund)
 
-    rows = screen.run_screen(store, ["UP", "MID", "DOWN", "LOSS"], as_of, "SPY", top_n=2, sectors={"UP": "Tech"})
+    rows = screen.run_screen(store, ["UP", "MID", "DOWN", "LOSS"], as_of, "SPY", top_n=2,
+                             info={"UP": {"sector": "Tech", "index": "S&P 400"}})
     by = {r["ticker"]: r for r in rows}
-    assert by["UP"]["rank"] == 1 and by["UP"]["selected"] and by["UP"]["metrics"]["sector"] == "Tech"
+    assert by["UP"]["rank"] == 1 and by["UP"]["selected"]
+    assert by["UP"]["metrics"]["sector"] == "Tech" and by["UP"]["metrics"]["index"] == "S&P 400"
+    m = by["UP"]["metrics"]
+    assert m["low_52w"] <= m["sma_200"] <= m["high_52w"] and m["low_52w"] <= m["last_close"] <= m["high_52w"]
     assert by["LOSS"]["quality_pass"] is False and by["LOSS"]["rank"] is None
     assert "not profitable (TTM)" in by["LOSS"]["metrics"]["notes"]
     assert by["DOWN"]["metrics"]["mom_12_1"] < 0                    # the 1e6 future print was ignored

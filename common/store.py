@@ -138,6 +138,12 @@ class Store:
         rows = self._select_all(lambda: self.db.table("tickers").select("symbol").eq("in_sp500", True).order("symbol"))
         return [r["symbol"] for r in rows]
 
+    def universe_symbols(self) -> list[str]:
+        """Everything the screen ranks: S&P 500 + S&P 400 members."""
+        rows = self._select_all(lambda: self.db.table("tickers").select("symbol")
+                                .or_("in_sp500.eq.true,in_sp400.eq.true").order("symbol"))
+        return [r["symbol"] for r in rows]
+
     def upsert_screens(self, rows: Sequence[dict]) -> int:
         return self._upsert("screens", rows, on_conflict="as_of,ticker")
 

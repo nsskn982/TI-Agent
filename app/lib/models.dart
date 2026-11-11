@@ -54,6 +54,10 @@ class Suggestion {
     required this.confidence,
     required this.asOf,
     this.runId,
+    this.bullCase,
+    this.bearCase,
+    this.catalysts = const [],
+    this.valuation,
   });
 
   final int id;
@@ -66,6 +70,13 @@ class Suggestion {
   final List<String> sources;
   final double confidence;
   final String asOf;
+  // Deeper write-up (null on suggestions made before it existed).
+  final String? bullCase;
+  final String? bearCase;
+  final List<String> catalysts;
+  final String? valuation;
+
+  bool get hasWriteUp => bullCase != null || bearCase != null || catalysts.isNotEmpty || valuation != null;
 
   Change change = Change.unknown;
   Stance? previousStance;
@@ -90,6 +101,10 @@ class Suggestion {
         sources: [for (final s in (j['sources'] as List? ?? const [])) s.toString()],
         confidence: (j['confidence'] as num? ?? 0).toDouble(),
         asOf: j['as_of'].toString(),
+        bullCase: j['bull_case'] as String?,
+        bearCase: j['bear_case'] as String?,
+        catalysts: [for (final c in (j['catalysts'] as List? ?? const [])) c.toString()],
+        valuation: j['valuation'] as String?,
       );
 }
 
@@ -161,6 +176,31 @@ class ScreenResult {
   final String? asOf;
   final Map<String, ScreenPick> picks; // by ticker
   final int screened; // how many S&P 500 stocks were screened
+}
+
+/// Latest daily close for a pick (refreshed by the daily ingest) and its move.
+class Quote {
+  const Quote({required this.date, required this.close, this.prevClose, this.weekAgoClose});
+
+  final DateTime date;
+  final double close;
+  final double? prevClose;
+  final double? weekAgoClose;
+
+  double? get dayChange => prevClose == null || prevClose == 0 ? null : close / prevClose! - 1;
+  double? get weekChange => weekAgoClose == null || weekAgoClose == 0 ? null : close / weekAgoClose! - 1;
+
+  /// From ascending daily rows of one ticker.
+  static Quote? fromSeries(List<PricePoint> pts) {
+    if (pts.isEmpty) return null;
+    final last = pts.last;
+    return Quote(
+      date: last.date,
+      close: last.price,
+      prevClose: pts.length >= 2 ? pts[pts.length - 2].price : null,
+      weekAgoClose: pts.length >= 6 ? pts[pts.length - 6].price : null,
+    );
+  }
 }
 
 /// "+62%" / "-4%" for a fraction like 0.62.

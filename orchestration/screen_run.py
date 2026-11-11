@@ -1,11 +1,12 @@
-"""Weekly S&P 500 screen (runs in GitHub Actions on Friday night, before the weekly agent run).
+"""Weekly screen of the S&P 500 + S&P MidCap 400 (GitHub Actions, Friday night, before the
+weekly agent run).
 
     python -m orchestration.screen_run                    # refresh universe + data, screen, backfill picks
     python -m orchestration.screen_run --skip-refresh     # re-screen from data already in Supabase
     python -m orchestration.screen_run --top-n 20 --as-of 2026-11-14
 
 Steps:
-  1. S&P 500 constituents (Wikipedia) -> tickers (in_sp500, sector, CIK)
+  1. S&P 500 + S&P 400 constituents (Wikipedia) -> tickers (in_sp500 / in_sp400, sector, CIK)
   2. ~800 days of prices for every constituent + the benchmark (batched yfinance download)
   3. SEC XBRL fundamentals for every constituent
   4. screen: momentum among quality companies -> `screens`, top N marked `selected`
@@ -33,25 +34,35 @@ log = logging.getLogger("screen")
 BACKFILL_DAYS = 730
 
 
-def refresh_universe(store, counts: Counter, errors: list) -> tuple[list[str], dict[str, str], dict[str, int]]:
-    """Upsert constituents; returns (symbols, sector by symbol, cik by symbol)."""
+def refresh_universe(store, counts: Counter, errors: list) -> tuple[list[str], dict[str, dict], dict[str, int]]:
+    """Upsert S&P 500 + S&P 400 constituents.
+    Returns (symbols, {symbol: {"sector", "index"}}, {symbol: cik})."""
     try:
-        members = universe.fetch_sp500()
+        members = universe.fetch_universe()
     except Exception as exc:
         errors.append({"source": "universe", "key": "wikipedia", "error": f"{type(exc).__name__}: {exc}"[:500]})
-        log.error("Could not fetch S&P 500 list (%s); using the stored universe", exc)
-        syms = store.sp500_symbols()
-        return syms, {}, {}
+        log.error("Could not fetch the index lists (%s); using the stored universe", exc)
+        return store.universe_symbols(), {}, {}
     current = {m["symbol"] for m in members}
-    dropped = [s for s in store.sp500_symbols() if s not in current]
-    rows = [{"symbol": m["symbol"], "name": m["name"], "sector": m["sector"], "cik": m["cik"], "in_sp500": True}
-            for m in members]
-    rows += [{"symbol": s, "in_sp500": False} for s in dropped]
-    store.upsert_tickers(rows)
-    counts["universe"] = len(members)
+    dropped = [s for s in store.universe_symbols() if s not in current]
+
+    def row(m):
+        r = {"symbol": m["symbol"], "name": m["name"], "sector": m["sector"],
+             "in_sp500": m["index"] == "S&P 500", "in_sp400": m["index"] == "S&P 400"}
+        return {**r, "cik": m["cik"]} if m["cik"] else r
+    rows = [row(m) for m in members]
+    # Bulk upserts need identical keys per batch: rows with and without a CIK go separately,
+    # so a missing CIK (the S&P 400 table has none) never blanks a stored one.
+    store.upsert_tickers([r for r in rows if "cik" in r])
+    store.upsert_tickers([r for r in rows if "cik" not in r])
     if dropped:
-        log.info("Left the index since last run: %s", ", ".join(dropped))
-    return ([m["symbol"] for m in members], {m["symbol"]: m["sector"] for m in members},
+        store.upsert_tickers([{"symbol": s, "in_sp500": False, "in_sp400": False} for s in dropped])
+        log.info("Left the indexes since last run: %s", ", ".join(dropped))
+    counts["universe"] = len(members)
+    counts["sp500"] = sum(m["index"] == "S&P 500" for m in members)
+    counts["sp400"] = sum(m["index"] == "S&P 400" for m in members)
+    return ([m["symbol"] for m in members],
+            {m["symbol"]: {"sector": m["sector"], "index": m["index"]} for m in members},
             {m["symbol"]: m["cik"] for m in members if m["cik"]})
 
 
@@ -116,7 +127,7 @@ def backfill_picks(store, picks: list[str], counts: Counter, errors: list) -> No
 
 def main(argv: list[str] | None = None) -> int:
     logging_setup.setup()
-    p = argparse.ArgumentParser(description="Weekly S&P 500 screen")
+    p = argparse.ArgumentParser(description="Weekly screen: S&P 500 + S&P MidCap 400")
     p.add_argument("--as-of", type=date.fromisoformat, default=None, help="Screen date (default: tomorrow, "
                    "so the latest close counts)")
     p.add_argument("--top-n", type=int, default=env_int("SCREEN_TOP_N", 20))
@@ -132,9 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     errors: list[dict] = []
 
     if args.skip_refresh:
-        symbols, sectors = store.sp500_symbols(), {}
+        symbols, info = store.universe_symbols(), {}
     else:
-        symbols, sectors, ciks = refresh_universe(store, counts, errors)
+        symbols, info, ciks = refresh_universe(store, counts, errors)
         refresh_data(store, symbols, ciks, counts, errors)
     if not symbols:
         log.error("Empty universe; nothing to screen")
@@ -142,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Data is strictly before as_of; screening "as of tomorrow" includes today's close.
     as_of = args.as_of or date.today() + timedelta(days=1)
-    rows = run_screen(store, symbols, as_of, benchmark(), top_n=args.top_n, sectors=sectors)
+    rows = run_screen(store, symbols, as_of, benchmark(), top_n=args.top_n, info=info)
     store.upsert_screens(rows)
     picks = [r["ticker"] for r in sorted((r for r in rows if r["selected"]), key=lambda r: r["rank"])]
     counts["screened"] = len(rows)
