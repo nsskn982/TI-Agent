@@ -106,7 +106,7 @@ ti-agent/
 ├── orchestration/          # M8: weekly_run.py, n8n/
 ├── evaluation/             # M10
 ├── web/                    # M9: Django website (dashboard/, tiweb/)
-├── app/                    # M9: Flutter project (planned)
+├── app/                    # M9: Flutter app (Supabase Auth + anon key)
 ├── tests/
 ├── .env.example
 └── README.md
@@ -238,8 +238,14 @@ The **Contact** tab in the header (and the closing scene) links to LinkedIn and 
 `CONTACT_LINKEDIN_URL` and `CONTACT_GITHUB_URL` in `.env`; an empty value hides that icon.
 
 For a deployment, set `DJANGO_DEBUG=false`, a real `DJANGO_SECRET_KEY` and `DJANGO_ALLOWED_HOSTS`, and serve
-it over HTTPS. The Flutter app (planned) will read the same Supabase tables directly, using the anon key and
-Supabase Auth, under the policies in `db/rls.sql`.
+it over HTTPS. See [docs/security.md](docs/security.md) for the full checklist.
+
+## App (Flutter)
+
+[app/](app/) is the Flutter client: sign-in, the same scroll story of this week's suggestions, ticker charts,
+cited passages and the Contact links. It reads Supabase directly with the anon key and Supabase Auth, under
+the policies in [db/rls.sql](db/rls.sql), and refuses to start with a service key. Setup and run steps are in
+[app/README.md](app/README.md); turn off public sign-ups in Supabase first.
 
 ## Quant + retrieval API (M4, M5)
 

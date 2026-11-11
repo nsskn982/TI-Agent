@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:,">
 <title>{% block title %}TI Agent{% endblock %} · TI Agent</title>
 <style>
 :root {
@@ -143,7 +144,7 @@ details.contact .menu p { margin: 4px 10px 6px; font-size: 12px; color: var(--mu
 <main>{% block main %}<div class="wrap">{% block content %}{% endblock %}</div>{% endblock %}</main>
 <footer><div class="wrap"><span>TI Agent · suggestions are generated weekly by a local LLM from cited filings and news; every number comes from code.</span>
   {% if contact_links %}<span class="socials">{% include "dashboard/_contact_links.html" %}</span>{% endif %}</div></footer>
-<script>
+<script nonce="{{ csp_nonce }}">
 // Close the Contact dropdown on outside click or Escape.
 document.addEventListener("click", e => document.querySelectorAll("details.contact[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; }));
 document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll("details.contact[open]").forEach(d => { d.open = false; d.querySelector("summary").focus(); }); });

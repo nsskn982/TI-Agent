@@ -49,6 +49,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "tiweb.security.ContentSecurityPolicyMiddleware",
 ]
 
 # "Contact" links in the header and at the end of the scroll story. Empty = hidden.
@@ -67,6 +68,7 @@ TEMPLATES = [{
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
         "dashboard.context.contact",
+        "tiweb.security.csp",
     ]},
 }]
 
@@ -102,11 +104,19 @@ SESSION_COOKIE_HTTPONLY = True
 X_FRAME_OPTIONS = "DENY"
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
+SESSION_COOKIE_AGE = 12 * 3600          # sign in again after 12 hours
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_HTTPONLY = True
+LOGIN_MAX_FAILURES = 5                  # per username (per IP: 4x) ...
+LOGIN_LOCKOUT_SECONDS = 15 * 60         # ... within this window, then HTTP 429
 if not DEBUG and not TESTING:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = (env("DJANGO_SSL_REDIRECT", "true") or "true").lower() == "true"
-    SECURE_HSTS_SECONDS = 3600
+    SECURE_HSTS_SECONDS = int(env("DJANGO_HSTS_SECONDS", "3600") or 3600)
+    # Behind a TLS-terminating proxy (Render, Fly, nginx) set DJANGO_BEHIND_PROXY=true.
+    if (env("DJANGO_BEHIND_PROXY", "false") or "false").lower() == "true":
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 LOGGING = {
     "version": 1,

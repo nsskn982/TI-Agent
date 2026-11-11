@@ -225,7 +225,7 @@ html.motion .ticker-scene.tall:not(.static) .glow { opacity: calc(var(--a) * .26
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   const root = document.documentElement;
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;  // static page, all visible
