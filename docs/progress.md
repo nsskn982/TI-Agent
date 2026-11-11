@@ -99,22 +99,33 @@ Content-Security-Policy violations.
 ## Flutter app
 
 Code in [app/](../app/): sign in with Supabase Auth, this week's suggestions as a scroll story, ticker
-detail with a price chart and history, cited passages. **Not yet compiled**: the Flutter SDK isn't
-installed on this machine. Before first use:
+detail with a price chart and history, cited passages. One codebase for **web, Android and iOS**. It
+replaces hosting the Django site: the app needs no server of its own.
+
+- **Web:** [.github/workflows/app.yml](../.github/workflows/app.yml) runs `flutter analyze` and
+  `flutter test`, builds the web version, and publishes it to GitHub Pages
+  (`https://nsskn982.github.io/TI-Agent/`) on every push to `main`.
+- **Android:** build an APK locally and send it to testers.
+- **iOS:** needs a Mac and TestFlight.
+
+**Not yet compiled.** Flutter isn't installed on this machine, so the first workflow run is the first
+compile.
+
+Before the first publish:
 
 1. Re-run [db/rls.sql](../db/rls.sql) in the Supabase SQL editor. It adds the app's read access: run
    summaries without error text, and `app_citations()` for cited passages only.
-2. In Supabase, turn **off** public sign-ups and invite users (see [security.md](security.md)).
-3. Install Flutter and follow [app/README.md](../app/README.md).
+2. In Supabase, turn **off** public sign-ups and create users (see [security.md](security.md)).
+3. Add the `SUPABASE_ANON_KEY` repository secret, and set *Settings → Pages → Source* to *GitHub Actions*.
 
 ## Next steps
 
-1. Push `phase-2-knowledge` and merge it into `main`, so the daily job runs the current code.
+1. Fix whatever the first *App (Flutter)* workflow run reports, then check the published web app.
 2. Watch the daily job through 2026-11-19 for the Phase 1 gate.
 3. Three more weekly runs for the Phase 3 gate. Close heavy apps during the run (the model needs about
    4.6 GB of commit memory).
 4. Set up the Telegram bot (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) and `scripts/register_weekly_task.ps1`.
-5. Build and test the Flutter app.
+5. Android APK for testers; computed features in a table the app can read; push notifications.
 6. Phase 5: QAOA portfolio experiment and the M10 evaluation (hit rate, calibration, citation faithfulness).
 
 ## Known limitations

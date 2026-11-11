@@ -1,24 +1,28 @@
-# TI Agent app (Flutter)
+# TI Agent app (Flutter): web, Android, iOS
 
-A mobile/desktop/web client for TI Agent. You sign in, then scroll through this week's suggestions:
+One Flutter codebase for every platform. Sign in, then scroll through this week's suggestions:
 - **Opening screen:** fades away as you scroll.
 - **At a glance:** a grid of every ticker's two views.
 - **One scene per ticker:** the symbol grows into place, and the 1–3 month and 6–24 month views slide in
-  from the left and right as you scroll.
+  from the left and right.
 - **Contact:** LinkedIn and GitHub.
 
 Tap a source chip to read the exact passage a suggestion cites. Tap **Chart and history** for a
 12-month chart against the benchmark.
 
-It follows the same rules as the website: invite-only, read-only, no financial advice.
+| Platform | How it's built | Where it goes |
+|---|---|---|
+| **Web** | Automatically by GitHub Actions ([app.yml](../.github/workflows/app.yml)) on every push to `main` | GitHub Pages: `https://nsskn982.github.io/TI-Agent/` |
+| **Android** | `flutter build apk` on your PC | Send the APK to invited testers |
+| **iOS** | `flutter build ipa` on a **Mac** with Xcode (Apple requires it) | TestFlight, which needs an Apple Developer account ($99/year) |
 
-> **Status:** written but **not yet compiled**. The Flutter SDK wasn't installed on the machine it was
-> written on. Expect to fix a few small compile issues on the first `flutter analyze`.
+> **Status:** written but not yet compiled. The first push to `main` runs `flutter analyze` and
+> `flutter test` in GitHub Actions. If something fails, the log shows exactly what to fix.
 
 ## How it reads data
 
-There is no server of its own. The app talks to Supabase directly with the **public anon key** and
-**Supabase Auth**, so row-level security in [db/rls.sql](../db/rls.sql) decides what it can see:
+There is no server. The app talks to Supabase directly with the **public anon key** and **Supabase
+Auth**, so row-level security in [db/rls.sql](../db/rls.sql) decides what it can see:
 
 | Data | Access |
 |---|---|
@@ -27,39 +31,43 @@ There is no server of its own. The app talks to Supabase directly with the **pub
 | Cited passages | Through `app_citations(ids)`: only chunks some suggestion cites, at most 20 per call |
 | Raw documents, chunks, logs, any writes | No access |
 
-**The app refuses to start with a service or secret key.** Anything inside an app can be extracted from
-it, and those keys bypass row-level security.
+The anon key ends up inside the web page and the app. That's how Supabase is designed: it's public,
+and the database rules protect the data. **A service or secret key must never be used.** The app
+refuses to start with one, and the GitHub Action refuses to publish one.
 
-## Setup
+## One-time setup
 
 1. **Database.** Re-run [db/rls.sql](../db/rls.sql) in the Supabase SQL editor. It is safe to run again,
    and it adds the app's read access.
 2. **Turn off public sign-ups.** In Supabase, go to *Authentication → Sign In / Providers* and turn off
    *Allow new users to sign up*. Create accounts in *Authentication → Users → Add user* (tick *Auto
    confirm*). Without this step, anyone could create an account and read results.
-3. **Install Flutter** (stable): <https://docs.flutter.dev/get-started/install/windows>. Then run
-   `flutter doctor`.
-4. **Generate the platform folders.** This repo holds only the Dart code. Existing files are not
-   overwritten:
-   ```powershell
-   cd app
-   flutter create --project-name ti_agent --platforms=android,ios,web,windows .
-   flutter pub get
-   ```
-5. **Configure.** Copy `config.example.json` to `config.json` (it's ignored by git) and fill in:
-   - `SUPABASE_URL`
-   - `SUPABASE_ANON_KEY`: *Project Settings → API keys*, the **anon / publishable** key
-   - `LINKEDIN_URL`: optional
+3. **GitHub secret and variable.** Go to *Settings → Secrets and variables → Actions*:
+   - Add the secret `SUPABASE_ANON_KEY`: Supabase → *Project Settings → API keys*, the **anon /
+     publishable** key. `SUPABASE_URL` is already there.
+   - Optional: under the *Variables* tab, add `LINKEDIN_URL`.
+4. **Turn on GitHub Pages.** Go to *Settings → Pages → Build and deployment → Source: GitHub Actions*.
+5. Push to `main`. The *App (Flutter)* workflow tests the app, builds the web version and publishes it.
 
-## Run and test
+## Working on it locally
+
+Install Flutter (stable) from <https://docs.flutter.dev/get-started/install/windows>, plus Android
+Studio for Android builds. Then:
 
 ```powershell
+cd app
+flutter create --project-name ti_agent --org com.nsskn982 --platforms=web,android,ios .   # once; keeps existing files
+copy config.example.json config.json      # fill in SUPABASE_URL and the anon key (git-ignored)
+flutter pub get
 flutter analyze
 flutter test
-flutter run -d chrome  --dart-define-from-file=config.json   # or -d edge, -d windows, an Android device
+flutter run -d chrome --dart-define-from-file=config.json        # or -d edge, or a connected Android phone
+flutter build apk --release --dart-define-from-file=config.json  # Android: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-For a release build, add `--dart-define-from-file=config.json` to `flutter build apk` / `ipa` / `web`.
+`android/app/src/main/AndroidManifest.xml` is committed because release builds need the internet
+permission, which Flutter's template adds to debug builds only. The other platform folders are
+generated by `flutter create`.
 
 ## Layout
 
@@ -75,3 +83,10 @@ For a release build, add `--dart-define-from-file=config.json` to `flutter build
 
 Accessibility: with the system *reduce motion* setting on, nothing animates and everything is shown.
 Stance always comes with a shape (▲ ■ ▼) and a word, never colour alone.
+
+## Not built yet
+
+- **Computed features** on the ticker screen (P/E, RSI, …). These are calculated on the server today;
+  the plan is for the weekly run to store them in a table the app can read.
+- **Push notifications** (Firebase) when a new weekly run lands.
+- **Custom web page title, icons and splash screen.**

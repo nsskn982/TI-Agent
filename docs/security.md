@@ -66,6 +66,8 @@ don't control.
 | 5 | The workflow's `GITHUB_TOKEN` had default permissions, and the manual `tickers` input could pass options like `--days 9999` | Low | **Fixed**: read-only token, validated inputs |
 | 6 | `setuptools` 78.1.0 in the virtualenv has known vulnerabilities (PYSEC-2025-49, PYSEC-2026-3447, GHSA-xmj3-9gf7-h52w) | Low (build tool, not used at run time) | **Fixed**: upgraded to 84.2.1. `pip-audit` reports nothing else; `torch` can't be audited |
 | 7 | Supabase Auth allows public sign-ups by default. Once the app ships, anyone could create an account and read results | High once the app is live | **Action needed** (below) |
+| 9 | `scripts/setup.ps1` set `OLLAMA_HOST=0.0.0.0:11434`, exposing the model API to the local network (this machine never ran with it) | Low | **Fixed**: now `127.0.0.1:11434` |
+| 10 | A comment in `ingest.yml` contained an empty `${{ }}`, which GitHub evaluates even in comments; the workflow became invalid ("No jobs were run") | High (daily ingest stopped) | **Fixed**; `tests/test_workflows.py` now checks every workflow |
 | 8 | Git history checked for leaked keys (Supabase JWTs and secret keys, Telegram tokens, API keys): none found. `.env` and `web/db.sqlite3` are not tracked | — | OK |
 
 Tests for fixes 1–5 are in [tests/test_security.py](../tests/test_security.py).
@@ -77,15 +79,16 @@ Tests for fixes 1–5 are in [tests/test_security.py](../tests/test_security.py)
    the app.
 2. **Re-run [db/rls.sql](../db/rls.sql)** in the SQL editor. It is safe to run again, and it adds the
    app's limited read access.
-3. **When deploying the website:**
-   - set `DJANGO_DEBUG=false`, a long random `DJANGO_SECRET_KEY` and the real `DJANGO_ALLOWED_HOSTS`
-   - add `DJANGO_BEHIND_PROXY=true` if TLS ends at a proxy
-   - serve over HTTPS
-   - the login throttle uses Django's cache; with several server processes, switch `CACHES` to a shared
-     cache (Redis or the database), otherwise each process counts separately
-4. **Rotate a key** if it was ever pasted into a chat, an issue or a log. Supabase: *Project Settings →
+3. **Publishing the app.** The Flutter web build on GitHub Pages contains the Supabase URL and the
+   **anon** key. That is by design: both are public, and row-level security protects the data. The
+   `SUPABASE_ANON_KEY` GitHub secret must hold the anon/publishable key. The app workflow checks this and
+   refuses to publish a service or secret key.
+4. **The Django dashboard is a local tool.** It holds the service key, so don't host it as it is. If you
+   ever do: set `DJANGO_DEBUG=false`, a long random `DJANGO_SECRET_KEY`, the real `DJANGO_ALLOWED_HOSTS`,
+   serve it over HTTPS, and give the login throttle a shared cache.
+5. **Rotate a key** if it was ever pasted into a chat, an issue or a log. Supabase: *Project Settings →
    API keys*. Then update `.env` and the GitHub secret.
-5. Re-run `pip-audit` now and then. It's not a project dependency; install it in its own environment.
+6. Re-run `pip-audit` now and then. It's not a project dependency; install it in its own environment.
 
 ## Reporting a problem
 

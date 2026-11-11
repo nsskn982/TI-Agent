@@ -1,0 +1,93 @@
+name: App (Flutter) - check and publish web
+
+# Analyze + test the Flutter app on every change to app/, and publish the web build to
+# GitHub Pages from main. Android and iOS builds come from the same code (see app/README.md).
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["app/**", ".github/workflows/app.yml"]
+  workflow_dispatch:
+
+# Read-only by default; only the deploy job gets Pages permissions.
+permissions:
+  contents: read
+
+concurrency:
+  group: app-pages
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate platform folders (existing files are kept)
+        run: flutter create --project-name ti_agent --org com.nsskn982 --platforms=web,android,ios .
+
+      - run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
+
+      - name: Write build config (public values only)
+        if: github.event_name != 'pull_request'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          LINKEDIN_URL: ${{ vars.LINKEDIN_URL }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Add the SUPABASE_ANON_KEY repository secret (Settings > Secrets and variables > Actions)."; exit 1
+          fi
+          # Everything in a web build is public. Refuse to publish a key that bypasses row-level security.
+          role=$(python3 -c "import base64,json,os,sys
+          k=os.environ['SUPABASE_ANON_KEY']
+          if k.startswith('sb_secret_'): print('service_role'); sys.exit()
+          p=k.split('.')
+          print(json.loads(base64.urlsafe_b64decode(p[1]+'='*(-len(p[1])%4))).get('role','') if len(p)==3 else 'publishable')")
+          if [ "$role" = "service_role" ]; then
+            echo "SUPABASE_ANON_KEY holds a service/secret key. Use the anon (publishable) key."; exit 1
+          fi
+          jq -n --arg url "$SUPABASE_URL" --arg key "$SUPABASE_ANON_KEY" --arg li "$LINKEDIN_URL" \
+            '{SUPABASE_URL: $url, SUPABASE_ANON_KEY: $key, BENCHMARK: "SPY", LINKEDIN_URL: $li,
+              GITHUB_URL: "https://github.com/nsskn982"}' > config.json
+
+      - name: Build web
+        if: github.event_name != 'pull_request'
+        run: |
+          flutter build web --release --base-href "/${GITHUB_REPOSITORY#*/}/" --dart-define-from-file=config.json
+          rm config.json
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: app/build/web
+
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

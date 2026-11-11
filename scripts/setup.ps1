@@ -61,7 +61,7 @@ if (-not $SkipOllama) {
         OLLAMA_KV_CACHE_TYPE   = "q8_0"
         OLLAMA_CONTEXT_LENGTH  = "16384"
         OLLAMA_KEEP_ALIVE      = "5m"
-        OLLAMA_HOST            = "0.0.0.0:11434"
+        OLLAMA_HOST            = "127.0.0.1:11434"   # local only; 0.0.0.0 would expose the model to the network
     }
     foreach ($k in $settings.Keys) {
         [Environment]::SetEnvironmentVariable($k, $settings[$k], "User")
