@@ -177,7 +177,9 @@ python -m pytest -q                   # offline tests, no keys needed
 python -m retrieval.evaluate --rerank
 ```
 
-Weekly agent run (Phase 3): run it once by hand, then schedule it:
+Weekly agent run (Phase 3): double-click **`run_weekly.cmd`** in the repo folder. It starts Ollama if
+needed, runs this week's S&P 500 picks (about 20 min), and logs to `logs\weekly_run.log`. It also takes
+options, e.g. `run_weekly.cmd --tickers AAPL --no-telegram`. Or, from a terminal:
 
 ```powershell
 python -m orchestration.weekly_run --tickers AAPL --no-telegram   # smoke test, one ticker
