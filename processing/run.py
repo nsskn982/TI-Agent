@@ -74,10 +74,28 @@ def process(store, embedder, max_docs: int | None = None, batch_size: int = 25) 
     return stats
 
 
+def score_sentiment(store, scorer, max_docs: int | None = None, batch_size: int = 200) -> int:
+    """FinBERT-score every news doc without a score (also backfills older news)."""
+    scored = 0
+    seen: set[int] = set()
+    while max_docs is None or scored < max_docs:
+        docs = [d for d in store.fetch_unscored_news(batch_size) if d["id"] not in seen]
+        if not docs:  # also guards against an update that silently matched nothing
+            break
+        seen.update(d["id"] for d in docs)
+        texts = [f"{normalize(d.get('title') or '')}. {normalize(d.get('body') or '')[:600]}" for d in docs]
+        results = scorer.score(texts)
+        store.set_sentiment([{"id": d["id"], "sentiment": s, "label": l} for d, (s, l) in zip(docs, results)])
+        scored += len(docs)
+        log.info("Sentiment: %d news docs scored", scored)
+    return scored
+
+
 def main(argv: list[str] | None = None) -> int:
     logging_setup.setup()
     p = argparse.ArgumentParser(description="TI Agent processing + embedding (M2)")
     p.add_argument("--max-docs", type=int, default=None)
+    p.add_argument("--skip-sentiment", action="store_true")
     args = p.parse_args(argv)
 
     from common.store import Store
@@ -86,6 +104,17 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now(timezone.utc)
     store = Store()
     stats = process(store, Embedder(), args.max_docs)
+
+    if not args.skip_sentiment:
+        from processing.sentiment import SentimentScorer
+
+        try:
+            stats["sentiment"] = score_sentiment(store, SentimentScorer())
+        except Exception as exc:
+            log.exception("Sentiment scoring failed")
+            stats["failed"] += 1
+            stats["errors"].append({"stage": "sentiment", "error": f"{type(exc).__name__}: {exc}"[:500]})
+
     status = "ok" if not stats["failed"] else ("error" if not stats["documents"] else "partial")
     log.info("Done: status=%s %s", status, {k: v for k, v in stats.items() if k != "errors"})
     store.log_run(
@@ -93,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             "job": "processing",
             "started_at": started.isoformat(),
             "status": status,
-            "counts": {"documents": stats["documents"], "chunks": stats["chunks"], "failed": stats["failed"]},
+            "counts": {k: stats.get(k, 0) for k in ("documents", "chunks", "failed", "sentiment")},
             "errors": stats["errors"],
         }
     )

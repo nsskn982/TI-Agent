@@ -12,8 +12,15 @@ supabase>=2.4
 # Data sources
 yfinance>=0.2.40
 
-# Embeddings (CPU is fine for MiniLM)
+# Embeddings, reranker, FinBERT sentiment (CPU is fine for all three)
 sentence-transformers>=2.7
+transformers>=4.40
+
+# Quant API (M4)
+numpy>=1.26
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
 
 # Dev
 pytest>=8.0

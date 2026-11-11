@@ -13,6 +13,7 @@ alter table suggestions     enable row level security;
 alter table portfolio_runs  enable row level security;
 alter table performance     enable row level security;
 alter table ingestion_runs  enable row level security;
+alter table fundamentals    enable row level security;
 
 drop policy if exists "authenticated read" on tickers;
 create policy "authenticated read" on tickers        for select to authenticated using (true);
@@ -29,6 +30,15 @@ create policy "authenticated read" on portfolio_runs for select to authenticated
 drop policy if exists "authenticated read" on performance;
 create policy "authenticated read" on performance    for select to authenticated using (true);
 
+-- Explicit grants. Projects created with "automatically expose new tables" turned off
+-- don't give Supabase's API roles default privileges, so grant what each role needs.
+grant usage on schema public to service_role, authenticated, anon;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+grant select on tickers, prices, suggestions, portfolio_runs, performance to authenticated;
+
 -- Retrieval functions are for the service role only.
 revoke execute on function match_chunks(vector, timestamptz, int, text, text) from public, anon, authenticated;
-revoke execute on function keyword_chunks(text, timestamptz, int, text) from public, anon, authenticated;
+revoke execute on function keyword_chunks(text, timestamptz, int, text, text) from public, anon, authenticated;
+revoke execute on function set_sentiment(jsonb) from public, anon, authenticated;

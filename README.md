@@ -27,7 +27,7 @@ GitHub Actions (cloud, daily)
   → Supabase (Postgres + pgvector)
 
 Laptop (weekly, GPU)
-  AI Finance Agent (Ollama · Qwen2.5 7B)
+  AI Finance Agent (Ollama · Qwen3.5 4B)
     tools: search_knowledge · get_features · get_prices
            get_macro · optimize_portfolio · save_suggestion
   → Supabase "suggestions" + "portfolio_runs"
@@ -64,7 +64,7 @@ Supabase is the single hand-off point: every module reads from and writes to it,
 | Data | Finnhub (free tier), SEC EDGAR, FRED, yfinance |
 | Storage | Supabase free tier (Postgres, pgvector, auth, realtime) |
 | Embeddings | sentence-transformers `all-MiniLM-L6-v2` |
-| LLM | Ollama + Qwen2.5 7B Instruct (Q4) |
+| LLM | Ollama + Qwen3.5 4B (Q4, tool calling + thinking) |
 | Backend | Python, FastAPI, pandas, `ta`, pydantic |
 | Quantum | Qiskit, PennyLane (simulators; IBM Quantum free plan optional) |
 | Classical baseline | PyPortfolioOpt |
@@ -114,7 +114,7 @@ ti-agent/
 ## Requirements
 
 - Windows/Linux/macOS, Python 3.11+
-- NVIDIA GPU with ≥ 6 GB VRAM for the 7B model (or use `qwen2.5:3b` on smaller GPUs / CPU)
+- NVIDIA GPU with ≥ 6 GB VRAM for `qwen3.5:4b` (or `qwen3.5:2b` on smaller GPUs / CPU; `qwen3.5:9b` with ≥ 10 GB)
 - Free accounts: GitHub, Supabase, Finnhub, Firebase, Telegram (bot via BotFather)
 - Flutter SDK (for the app)
 
@@ -135,13 +135,32 @@ cp .env.example .env          # fill in SUPABASE_URL, SUPABASE_SERVICE_KEY, FINN
 #    Run db/schema.sql and db/rls.sql in the Supabase SQL editor
 
 # 4. Set up the local model
-ollama pull qwen2.5:7b
-ollama create trading-analyst -f agent/Modelfile
+.\scripts\create_model.ps1      # pulls qwen3.5:4b, builds text-only trading-analyst (fits 6 GB)
 
 # 5. Run once by hand (watchlist lives in watchlist.txt; --tickers overrides it)
 python -m ingestion.run --tickers AAPL MSFT --days 730   # first run: ~2-year backfill
 python -m processing.run
 python -m pytest -q                                      # offline tests, no keys needed
+
+# 6. Quant + retrieval API (Phase 2)
+uvicorn quant.api:app --port 8000                        # docs at http://localhost:8000/docs
+python -m retrieval.evaluate                             # Phase 2 gate: 10 test queries
+```
+
+Weekly agent run (Phase 3): run it once by hand, then schedule it:
+
+```powershell
+python -m orchestration.weekly_run --tickers AAPL --no-telegram   # smoke test, one ticker
+.\scripts
+egister_weekly_task.ps1                                 # every Saturday 09:00
+```
+
+Upgrading from Phase 1: re-run `db/schema.sql` and `db/rls.sql` (both are idempotent), then backfill
+fundamentals and sentiment once:
+
+```bash
+python -m ingestion.run --sources fundamentals --days 730
+python -m processing.run                                 # scores all existing news with FinBERT
 python -m orchestration.weekly_run
 ```
 
@@ -155,14 +174,14 @@ From PowerShell at the repository root, run:
 .\scripts\setup.ps1
 ```
 
-The script creates `.venv`, installs `requirements.txt` when it is present, creates `.env` from `.env.example` without overwriting an existing file, configures the recommended Ollama user settings, and pulls the selected model. Use `-OllamaModel qwen2.5:3b` for a smaller GPU or CPU, `-SkipOllama` to configure Python only, or `-SkipPython` to configure Ollama only.
+The script creates `.venv`, installs `requirements.txt` when it is present, creates `.env` from `.env.example` without overwriting an existing file, configures the recommended Ollama user settings, and pulls the selected model. Use `-OllamaModel qwen3.5:2b` for a smaller GPU or CPU, `-SkipOllama` to configure Python only, or `-SkipPython` to configure Ollama only.
 
 ### Recommended Ollama settings (6 GB VRAM)
 
 ```powershell
 setx OLLAMA_FLASH_ATTENTION 1
 setx OLLAMA_KV_CACHE_TYPE q8_0
-setx OLLAMA_CONTEXT_LENGTH 8192
+setx OLLAMA_CONTEXT_LENGTH 16384
 setx OLLAMA_KEEP_ALIVE 5m
 setx OLLAMA_HOST 0.0.0.0:11434
 ```
@@ -180,6 +199,8 @@ Restart Ollama afterwards and check `ollama ps` shows `100% GPU`.
 | `FRED_API_KEY` | Ingestion |
 | `SEC_USER_AGENT` | Ingestion (EDGAR requires a contact email) |
 | `OLLAMA_URL` | Agent (default `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Agent (default `trading-analyst`, created from `agent/Modelfile`) |
+| `BENCHMARK` | Quant engine, evaluation (default `SPY`) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Delivery |
 
 Never commit `.env`.
@@ -193,6 +214,18 @@ Never commit `.env`.
 | P3 Agent | 5–6 | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON |
 | P4 App | 7–9 | Flutter app + web, push | Invite-only testers for 2 weeks |
 | P5 Quantum + eval | 10–12 | QAOA, quantum kernel, scoring, n8n | Quantum vs classical benchmark report |
+
+## Quant + retrieval API (M4, M5)
+
+| Route | Returns |
+|---|---|
+| `GET /features/{ticker}?as_of=` | Technicals (returns, SMA, RSI, MACD, vol, drawdown, beta and relative strength vs `BENCHMARK`), point-in-time TTM fundamentals from SEC XBRL (growth, margins, P/E, FCF yield, D/E), FinBERT news-sentiment aggregates |
+| `GET /prices/{ticker}?as_of=&days=` | Daily bars |
+| `GET /macro?as_of=` | FRED snapshot with release lags applied (e.g. CPI counts ~45 days after its observation date) |
+| `GET /search?q=&ticker=&source=&as_of=&k=&rerank=` | Hybrid vector + keyword search (RRF), optional cross-encoder rerank, max 2 chunks per document, each hit with a `chunk_<id>` citation |
+
+Every route only sees data from strictly before `as_of`: prices before that day, filings and XBRL facts
+filed before it, news published before it.
 
 ## Evaluation
 
@@ -209,6 +242,24 @@ Never commit `.env`.
 - Agent runs are capped at a fixed number of tool steps and every tool call is logged.
 - Numbers come from code, never from the LLM.
 - The app stays private or invite-only; publishing investment recommendations publicly may fall under EU market rules (MAR).
+
+## Documentation
+
+- [docs/progress.md](docs/progress.md): status of Phases 1 and 2 and what blocks each gate
+- [docs/architecture.md](docs/architecture.md): how the data, quant and retrieval layers work, with citations
+- [docs/references.md](docs/references.md) ([BibTeX](docs/references.bib)): research the design builds on
+
+## Key references
+
+The design builds on these papers; the full list of 22 arXiv papers is in [docs/references.md](docs/references.md).
+
+- Lewis et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, 2020. [arXiv:2005.11401](https://arxiv.org/abs/2005.11401)
+- Glasserman & Lin, *Assessing Look-Ahead Bias in Stock Return Predictions Generated By GPT Sentiment Analysis*, 2023. [arXiv:2309.17322](https://arxiv.org/abs/2309.17322)
+- Araci, *FinBERT: Financial Sentiment Analysis with Pre-trained Language Models*, 2019. [arXiv:1908.10063](https://arxiv.org/abs/1908.10063)
+- Reimers & Gurevych, *Sentence-BERT*, 2019. [arXiv:1908.10084](https://arxiv.org/abs/1908.10084)
+- Thakur et al., *BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models*, 2021. [arXiv:2104.08663](https://arxiv.org/abs/2104.08663)
+- Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models*, 2022. [arXiv:2210.03629](https://arxiv.org/abs/2210.03629)
+- Farhi, Goldstone & Gutmann, *A Quantum Approximate Optimization Algorithm*, 2014. [arXiv:1411.4028](https://arxiv.org/abs/1411.4028)
 
 ## License
 

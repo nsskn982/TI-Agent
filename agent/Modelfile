@@ -1,0 +1,14 @@
+# Reference model definition. On a 6 GB GPU use scripts/create_model.ps1 instead:
+# it builds the same model text-only (without Qwen3.5's ~650 MB vision projector,
+# which otherwise doesn't fit next to the weights and a 16K KV cache).
+#
+# The system prompt lives in agent/prompts/system.md and is sent by agent/agent.py,
+# so prompt changes don't require re-creating the model.
+FROM qwen3.5:4b
+
+# Qwen's recommended sampling for thinking mode (low temperatures cause repetition).
+PARAMETER temperature 1
+PARAMETER top_p 0.95
+PARAMETER top_k 20
+PARAMETER presence_penalty 1.5
+PARAMETER num_ctx 16384

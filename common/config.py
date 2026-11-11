@@ -29,3 +29,8 @@ def require(name: str) -> str:
 def env_int(name: str, default: int) -> int:
     value = env(name)
     return int(value) if value is not None else default
+
+
+def benchmark() -> str:
+    """Benchmark index ETF used for beta, relative strength and evaluation."""
+    return (env("BENCHMARK", "SPY") or "SPY").upper()

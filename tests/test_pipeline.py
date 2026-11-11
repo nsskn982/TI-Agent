@@ -22,6 +22,10 @@ def _patch_sources(monkeypatch, fail_prices_for=()):
         {"ticker": t, "source": "filing", "source_id": "edgar:1", "doc_type": "10-K", "title": "10-K",
          "url": "u", "published_at": "2024-11-01T18:00:00+00:00",
          "body": " ".join(f"Sentence {i} of the annual report." for i in range(200)), "meta": {}}])
+    monkeypatch.setattr(ingest_run.fundamentals, "fetch_fundamentals", lambda s, t, cik, since: [
+        {"ticker": t, "concept": "us-gaap:Revenues", "unit": "USD", "period_start": "2026-07-01",
+         "period_end": "2026-09-30", "value": 1e9, "form": "10-Q", "fp": "Q3", "fy": 2026,
+         "filed": "2026-10-30", "accn": "x"}])
     monkeypatch.setattr(ingest_run.fred, "fetch_series", lambda s, sid, start, key: [
         {"series_id": sid, "date": "2024-11-08", "value": 1.0}])
 
@@ -97,3 +101,13 @@ def test_watchlist_parsing(monkeypatch):
     monkeypatch.setenv("WATCHLIST", "aapl, msft,AAPL,, # comment")
     assert ingest_run.load_watchlist(None) == ["AAPL", "MSFT"]
     assert ingest_run.load_watchlist(["nvda"]) == ["NVDA"]
+
+
+def test_benchmark_prices_always_fetched(monkeypatch):
+    _patch_sources(monkeypatch)
+    store = FakeStore()
+    run = ingest_run.ingest(["AAPL"], days=5, sources=("prices", "fundamentals"), store=store)
+    assert run.errors == []
+    assert {t for t, _ in store.prices} == {"AAPL", "SPY"}
+    assert store.tickers["SPY"]["active"] is False and store.tickers["AAPL"]["active"] is True
+    assert len(store.fundamentals) == 1

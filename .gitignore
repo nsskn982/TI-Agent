@@ -5,3 +5,5 @@ __pycache__/
 .env
 *.log
 .cache/
+agent/Modelfile.generated
+logs/

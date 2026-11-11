@@ -32,6 +32,25 @@ create table if not exists macro_series (
     primary key (series_id, date)
 );
 
+-- Phase 2: as-reported XBRL facts from SEC companyfacts. One row per fact per filing,
+-- so the quant engine can rebuild exactly what was known on any as-of date.
+-- Instant facts (balance sheet) store period_start = period_end.
+create table if not exists fundamentals (
+    ticker          text not null references tickers(symbol) on delete cascade,
+    concept         text not null,           -- e.g. us-gaap:Revenues, dei:EntityCommonStockSharesOutstanding
+    unit            text not null,
+    period_start    date not null,
+    period_end      date not null,
+    value           double precision not null,
+    form            text,
+    fp              text,
+    fy              int,
+    filed           date not null,
+    accn            text not null,
+    primary key (ticker, concept, unit, period_start, period_end, accn)
+);
+create index if not exists fundamentals_ticker_filed_idx on fundamentals (ticker, filed);
+
 -- ---------------------------------------------------------------- text corpus
 create table if not exists documents (
     id              bigint generated always as identity primary key,
@@ -49,6 +68,12 @@ create table if not exists documents (
     process_error   text,
     unique (ticker, source, source_id)
 );
+-- Phase 2: news sentiment (FinBERT). `add column if not exists` upgrades Phase 1 installs.
+alter table documents add column if not exists sentiment double precision;   -- p(pos) - p(neg), -1..1
+alter table documents add column if not exists sentiment_label text;
+alter table documents add column if not exists scored_at timestamptz;
+create index if not exists documents_unscored_idx
+    on documents (ingested_at) where source = 'news' and scored_at is null;
 create index if not exists documents_unprocessed_idx
     on documents (ingested_at) where processed_at is null and process_error is null;
 create index if not exists documents_ticker_published_idx on documents (ticker, published_at desc);
@@ -80,6 +105,11 @@ create table if not exists agent_runs (
     status          text not null default 'running' check (status in ('running', 'ok', 'error')),
     error           text
 );
+
+-- Phase 3: allow 'partial' (some tickers failed). Re-created so existing installs pick it up.
+alter table agent_runs drop constraint if exists agent_runs_status_check;
+alter table agent_runs add constraint agent_runs_status_check
+    check (status in ('running', 'ok', 'partial', 'error'));
 
 create table if not exists tool_calls (
     id              bigint generated always as identity primary key,
@@ -144,6 +174,10 @@ create table if not exists ingestion_runs (
 
 -- ---------------------------------------------------------------- retrieval
 -- Vector search that never looks past the as-of date.
+-- HNSW applies WHERE filters *after* the index scan, so a ticker-filtered query
+-- could silently return fewer than match_count rows. Ticker-filtered queries
+-- therefore use an exact scan (per-ticker corpora are small); unfiltered ones
+-- use the index with a wider ef_search.
 create or replace function match_chunks(
     query_embedding vector(384),
     as_of           timestamptz,
@@ -155,25 +189,46 @@ returns table (
     id bigint, document_id bigint, ticker text, source text, doc_type text,
     published_at timestamptz, content text, similarity double precision
 )
-language sql stable
+language plpgsql stable
 as $$
-    select c.id, c.document_id, c.ticker, c.source, c.doc_type,
-           c.published_at, c.content,
-           1 - (c.embedding <=> query_embedding) as similarity
-    from chunks c
-    where c.published_at < as_of
-      and (filter_ticker is null or c.ticker = filter_ticker)
-      and (filter_source is null or c.source = filter_source)
-    order by c.embedding <=> query_embedding
-    limit match_count;
+#variable_conflict use_column
+begin
+    if filter_ticker is not null then
+        return query
+        select c.id, c.document_id, c.ticker, c.source, c.doc_type,
+               c.published_at, c.content,
+               1 - (c.embedding <=> query_embedding) as similarity
+        from chunks c
+        where c.ticker = filter_ticker
+          and c.published_at < as_of
+          and (filter_source is null or c.source = filter_source)
+        order by (c.embedding <=> query_embedding) + 0   -- "+ 0" forces exact ordering, not HNSW
+        limit match_count;
+    else
+        perform set_config('hnsw.ef_search', greatest(100, match_count * 4)::text, true);
+        return query
+        select c.id, c.document_id, c.ticker, c.source, c.doc_type,
+               c.published_at, c.content,
+               1 - (c.embedding <=> query_embedding) as similarity
+        from chunks c
+        where c.published_at < as_of
+          and (filter_source is null or c.source = filter_source)
+        order by c.embedding <=> query_embedding
+        limit match_count;
+    end if;
+end;
 $$;
 
 -- Keyword side of hybrid search (fused with match_chunks via RRF in M5).
+-- Natural-language questions rarely contain *all* terms of a chunk, so the
+-- query's lexemes are OR-ed together and ranked by cover density.
+drop function if exists keyword_chunks(text, timestamptz, int, text);
 create or replace function keyword_chunks(
     query_text      text,
     as_of           timestamptz,
     match_count     int default 10,
-    filter_ticker   text default null
+    filter_ticker   text default null,
+    filter_source   text default null
 )
 returns table (
     id bigint, document_id bigint, ticker text, source text, doc_type text,
@@ -181,15 +236,38 @@ returns table (
 )
 language sql stable
 as $$
+    with q as (
+        select to_tsquery('simple', string_agg(quote_literal(lex), ' | ')) as q
+        from unnest(tsvector_to_array(to_tsvector('english', query_text))) as lex
+    )
     select c.id, c.document_id, c.ticker, c.source, c.doc_type,
            c.published_at, c.content,
-           ts_rank_cd(c.tsv, q) as rank
-    from chunks c, websearch_to_tsquery('english', query_text) q
-    where c.tsv @@ q
+           ts_rank_cd(c.tsv, q.q) as rank
+    from chunks c, q
+    where q.q is not null
+      and c.tsv @@ q.q
       and c.published_at < as_of
       and (filter_ticker is null or c.ticker = filter_ticker)
+      and (filter_source is null or c.source = filter_source)
     order by rank desc
     limit match_count;
+$$;
+
+-- Bulk-write FinBERT scores: [{"id": 1, "sentiment": 0.4, "label": "positive"}, ...]
+create or replace function set_sentiment(payload jsonb)
+returns int
+language sql
+as $$
+    with u as (
+        update documents d
+        set sentiment = (x->>'sentiment')::double precision,
+            sentiment_label = x->>'label',
+            scored_at = now()
+        from jsonb_array_elements(payload) x
+        where d.id = (x->>'id')::bigint
+        returning 1
+    )
+    select count(*)::int from u;
 $$;
 
 -- Realtime feed for the app (M9).
