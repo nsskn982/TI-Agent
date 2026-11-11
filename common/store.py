@@ -79,6 +79,27 @@ class Store:
             n += int(res.data or 0)
         return n
 
+    # ------------------------------------------------------------ agent (Phase 3)
+    def start_agent_run(self, as_of: str, model: str | None) -> int:
+        res = self.db.table("agent_runs").insert({"as_of": as_of, "model": model, "status": "running"}).execute()
+        return int(res.data[0]["id"])
+
+    def finish_agent_run(self, run_id: int, status: str, error: str | None = None) -> None:
+        from datetime import datetime, timezone
+
+        self.db.table("agent_runs").update({
+            "status": status, "error": error, "finished_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", run_id).execute()
+
+    def log_tool_call(self, row: dict) -> None:
+        try:
+            self.db.table("tool_calls").insert(row).execute()
+        except Exception:  # an audit-log hiccup must not kill the agent run
+            log.exception("Could not write tool_calls row")
+
+    def upsert_suggestion(self, row: dict) -> None:
+        self.db.table("suggestions").upsert(row, on_conflict="ticker,horizon,as_of").execute()
+
     def log_run(self, row: dict) -> None:
         try:
             self.db.table("ingestion_runs").insert(row).execute()

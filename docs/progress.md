@@ -1,4 +1,4 @@
-# Progress report: Phases 1 and 2
+# Progress report: Phases 1–3
 
 *Status as of 2026-11-11.* This report covers Phase 1 (Foundations) and Phase 2 (Knowledge) from the
 [roadmap](../README.md#roadmap). For how the parts work, see [architecture.md](architecture.md).
@@ -7,11 +7,13 @@
 
 | Phase | Code | Tests | Committed | Gate | Gate status |
 |---|---|---|---|---|---|
-| P1 Foundations | Done | 20 pass | Yes, `7b7c4b0`, pushed | 7 days of data without errors | **Not started.** The daily workflow has 0 runs; the first one is scheduled for 22:30 UTC on 2026-11-11 |
-| P2 Knowledge | Done | 22 pass | **No** (working tree only) | Relevant chunks on 10 test queries | **Blocked.** Needs P1 data in Supabase |
+| P1 Foundations | Done | 20 pass | Yes, `7b7c4b0`, pushed | 7 days of data without errors | **Day 0.** Supabase set up and 2-year backfill loaded with 0 errors; the first scheduled daily run is 22:30 UTC on 2026-11-11 |
+| P2 Knowledge | Done | 22 pass | Yes, `b153cf5` on branch `phase-2-knowledge` (not pushed) | Relevant chunks on 10 test queries | **Passed 2026-11-11:** 10/10 automatic checks; all 10 on-topic by manual review with rerank |
+| P3 Agent | Done; works with the real model on real data (smoke test) | 27 pass | No | 4 weekly runs of valid, cited JSON | **Blocked.** Needs Ollama + P1/P2 data |
 
-All of the code for both phases is written and tested offline (42 tests, no network or keys needed).
-Neither phase has passed its gate yet, because both gates need a live Supabase project with data in it.
+All of the code for the three phases is written and tested offline (69 tests, no network or keys needed).
+Phase 2 has passed its gate. Phase 1 needs 7 clean daily runs (earliest 2026-11-19), and Phase 3 needs
+4 weekly runs.
 
 ## Phase 1: Foundations (M1 ingestion, M2 processing, M3 storage)
 
@@ -53,6 +55,29 @@ limit 20;
 
 The gate passes when 7 consecutive daily runs show `status = 'ok'` for both `ingestion` and `processing`.
 
+## Backfill and Phase 2 gate (2026-11-11)
+
+Supabase project set up: schema, RLS and grants applied, `public` added to the Data API's exposed
+schemas. Every API key checked with a real request. The 2-year backfill (`python -m ingestion.run --days 730`,
+then `python -m processing.run`) finished with **0 errors**:
+
+| Data | Rows | | Data | Rows |
+|---|---|---|---|---|
+| Prices (5 tickers + SPY) | 3,306 | | Documents | 1,391 (1,240 news + 151 filings) |
+| XBRL facts | 2,679 | | Chunks with embeddings | 9,627 |
+| Macro observations | 2,604 | | News items scored by FinBERT | 1,240 |
+
+`python -m retrieval.evaluate` against this data (as of 2026-11-11, k = 5):
+
+| Mode | Automatic checks | On-topic top results (manual review) |
+|---|---|---|
+| Hybrid (vector + keyword) | 10/10 | about 7/10; weaker on AAPL China, NVDA export controls, GOOGL YouTube |
+| Hybrid + cross-encoder rerank | 10/10 | 10/10; e.g. "Azure and other cloud services revenue grew 39%", "shifting and expanding export control restrictions" |
+
+As a result, the agent's `search_knowledge` tool now reranks by default (about 0.5 s per query on CPU).
+News chunks rarely appeared in the top results for these queries. They are short (headline plus summary)
+and the queries are about filings, so this is expected; the agent searches news with `source: "news"`.
+
 ## Phase 2: Knowledge (M4 quant engine, M5 retrieval)
 
 ### Done
@@ -82,7 +107,7 @@ The gate passes when 7 consecutive daily runs show `status = 'ok'` for both `ing
 
 ### Not done yet
 
-1. Commit and push the Phase 2 changes.
+1. Push branch `phase-2-knowledge` and merge it into `main`.
 2. Re-run `db/schema.sql` and `db/rls.sql`. Both are safe to run again on an existing database.
 3. Backfill fundamentals (`python -m ingestion.run --sources fundamentals --days 730`), then run
    `python -m processing.run` to score existing news.
@@ -101,9 +126,78 @@ The gate passes when 7 consecutive daily runs show `status = 'ok'` for both `ing
 | FRED values have no release timestamp | The fixed release delays we use are conservative estimates | Use ALFRED's historical vintages |
 | News-sentiment features only cover news ingested since Phase 1 | Sentiment history starts at the backfill window | None needed; it fills in over time |
 
-## Next: Phase 3 (Agent)
+## Phase 3: Agent (M6 agent, M8 weekly run, M9 Telegram)
 
-The M6 agent's read-only tools (`search_knowledge`, `get_features`, `get_prices`, `get_macro`) map
-directly onto the Phase 2 API routes. That leaves the agent loop, the prompt and Modelfile,
-`save_suggestion` with schema validation and a check that every cited chunk exists, the weekly
-orchestration (M8), and Telegram delivery.
+*Code added 2026-11-11, on top of branch `phase-2-knowledge`, not yet committed.* The gate is
+**4 weekly runs of valid, cited JSON**.
+
+### Done
+
+| Item | Where | Status |
+|---|---|---|
+| Suggestion schema + check that numbers come from tools | [agent/schema.py](../agent/schema.py) | Unit tests |
+| Tools: 4 read-only + `save_suggestion`, all bound to the run's as-of date | [agent/tools.py](../agent/tools.py) | Unit tests |
+| Ollama client with a fallback for tool calls written as text | [agent/llm.py](../agent/llm.py) | Tested against a fake HTTP session |
+| Agent loop with step and tool-call caps and context-budget control | [agent/agent.py](../agent/agent.py) | Tested with a scripted fake LLM |
+| System prompt + model build | [agent/prompts/system.md](../agent/prompts/system.md), [scripts/create_model.ps1](../scripts/create_model.ps1) | Smoke-tested with Qwen3.5 4B (see below) |
+| Weekly run with retry and run status (`ok` / `partial` / `error`) | [orchestration/weekly_run.py](../orchestration/weekly_run.py) | Unit tests |
+| Telegram digest and alerts | [delivery/telegram.py](../delivery/telegram.py) | Tested against a fake HTTP session |
+| Task Scheduler registration | [scripts/register_weekly_task.ps1](../scripts/register_weekly_task.ps1) | Passes the PowerShell parser; not registered yet |
+
+The tests cover these cases, among others:
+- a made-up citation is rejected and the fixed version is accepted
+- a made-up figure (e.g. "37.5%") is rejected
+- the model can't override `ticker` or `as_of`
+- unknown tools such as `place_trade` and tickers off the watchlist are rejected
+- the step and tool-call caps stop the run
+- context trimming never drops the system prompt
+- a retry keeps a horizon that was already saved
+- a crash is recorded as `error` and sends an alert
+
+The full suite has 69 tests.
+
+### Not done yet (blocks the gate)
+
+1. Run more smoke tests (all 5 watchlist tickers, with news once `FINNHUB_API_KEY` is set) to see
+   how often a ticker fails within the step cap.
+2. Phases 1 and 2 must have data in Supabase first (see above). Then re-run `db/schema.sql`, which adds
+   the `partial` run status.
+3. Create a Telegram bot with BotFather, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and run
+   `scripts/register_weekly_task.ps1`.
+
+### Smoke test with the real model (2026-11-11)
+
+[scripts/smoke_agent.py](../scripts/smoke_agent.py) loads real data into the in-memory store and runs
+the agent on Ollama: yfinance prices, SEC filings and XBRL facts embedded with MiniLM. News and macro
+were not loaded (no Finnhub or FRED keys), so the agent had filings and computed features only.
+
+| Ticker | Result | Model turns | Tool calls | Rejected saves | Time | Stances (medium / long) |
+|---|---|---|---|---|---|---|
+| AAPL | Both saved | 8 | 12 | 3 | 69 s | bullish 0.60 / bullish 0.58 |
+| MSFT | Both saved | 4 | 10 | 0 | 37 s | neutral 0.60 / bullish 0.62 |
+
+Model: `qwen3.5:4b` (Q4_K_M), text-only, 16K context, thinking on, 100% on the RTX 4050's GPU,
+3.8–16.5 s per turn. What we learned:
+
+- **The guardrails work on a real model.** For AAPL they caught one made-up citation (`chunk_2089`) and
+  figures not found in any tool output; each time the model corrected itself and resubmitted.
+- **Fixed: false rejections.** Figures like "$100 billion" that appear in filing text weren't counted as
+  tool numbers. Tool outputs are now read with the same unit rules as the thesis.
+- **Fixed: the vision encoder didn't fit.** Stock `qwen3.5:4b` includes a ~650 MB vision projector. It
+  didn't fit beside the weights and a 16K KV cache on 6 GB, and Ollama's fallback crashed.
+  `scripts/create_model.ps1` builds a text-only model that keeps tool calling and thinking.
+- Theses quote computed values correctly (TTM growth, FCF, returns, distance from the moving
+  averages) and cite filing passages for qualitative claims.
+
+To check the gate in the Supabase SQL editor:
+
+```sql
+select r.id, r.as_of, r.status, count(s.id) as suggestions,
+       count(*) filter (where cardinality(s.sources) > 0) as cited
+from agent_runs r left join suggestions s on s.run_id = r.id
+group by r.id order by r.as_of desc limit 8;
+```
+
+The gate passes after 4 weekly runs with `status = 'ok'` and two cited suggestions per ticker.
+Since the first real run can't happen before data has accumulated, the earliest realistic pass is
+four Saturdays after the first successful run.

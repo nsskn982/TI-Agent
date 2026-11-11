@@ -165,11 +165,72 @@ with HTTP 400, and an unknown ticker returns 404. All floats are rounded, and Na
 that none are dated on or after `as_of`, and that an expected keyword appears in the top 3. It then
 prints snippets so a person can judge relevance.
 
-## 7. Later phases (planned)
+## 7. M6 agent, M8 weekly run, M9 Telegram (Phase 3)
+
+**Agent loop** ([agent/agent.py](../agent/agent.py)). For each ticker, the model works in a loop:
+it reasons, calls a tool, reads the result, and repeats until it has saved both suggestions
+(ReAct [[16]](references.md#ref-16); tool use as in Toolformer [[17]](references.md#ref-17)). The model
+is Qwen3.5 4B, running in Ollama as a text-only build ([scripts/create_model.ps1](../scripts/create_model.ps1)
+leaves out the vision projector, which doesn't fit on 6 GB) with a 16K-token context, Qwen's
+recommended sampling settings, and **thinking** turned on: the model
+reasons before each reply. That reasoning is kept out of the conversation history, so it costs time
+but no context. If a model can't think, the client switches thinking off automatically. Qwen3.5 has
+no technical report on arXiv; its predecessor's report [[18]](references.md#ref-18) describes the
+combined thinking and non-thinking design.
+
+| Tool | Kind | Notes |
+|---|---|---|
+| `search_knowledge` | read | Phase 2 retriever, at most 6 passages of 600 characters each; every returned id is recorded |
+| `get_features` | read | `/features` output with `null` values removed |
+| `get_prices` | read | Weekly closes, at most 52 weeks |
+| `get_macro` | read | `/macro` output |
+| `save_suggestion` | **write** (the only one) | Checked and stored; the model gets an error message back if it breaks a rule |
+
+**Guardrails are enforced in code** ([agent/tools.py](../agent/tools.py), [agent/schema.py](../agent/schema.py)),
+because a 4B model doesn't reliably follow prompt rules:
+
+- **Date and ticker are fixed by code.** No tool accepts an `as_of` parameter. `ticker` and `as_of` on a
+  suggestion are always filled in by code, so values the model sends for them are ignored. Tickers
+  outside the watchlist are rejected.
+- **Citations must have been seen.** Every `sources` id must have been returned by `search_knowledge`
+  in the same conversation. This catches made-up ids, and it applies the citation checking described
+  by Gao et al. [[15]](references.md#ref-15) at the moment of saving.
+- **Numbers must come from tools.** Every figure that looks like a claim (a decimal, a %, a $ amount,
+  or a B/M/T/x suffix) in the thesis or risks must match, after rounding, a number some tool returned
+  in that conversation. A ratio like `0.151` may be written `15.1%`. Plain integers (years, "S&P 500",
+  "3 segments") are not checked.
+- **Caps.** At most 12 model turns and 16 tool calls per ticker, and every call is logged to `tool_calls`.
+- **Context budget.** When the context window overflows, Ollama silently drops the *oldest* messages,
+  which are the system prompt and the rules. The loop prevents this by shortening the oldest tool
+  results once the estimated size passes 75% of `num_ctx`. Ids that were cited stay valid.
+- **Fallback for tool calls written as text.** Small models sometimes write a tool call as plain text
+  (`<tool_call>{…}</tool_call>`) instead of a structured call; these are parsed and run.
+
+**Stance and confidence.** The stance is *relative to the benchmark*: bullish means the model expects the
+ticker to beat SPY over the horizon. This matches how M10 will score suggestions (excess return).
+`confidence` is the probability that the stance turns out right; the prompt tells the model to stay
+cautious, and M10 will check how well this matches reality [[22]](references.md#ref-22).
+
+**Weekly run** ([orchestration/weekly_run.py](../orchestration/weekly_run.py)) works through the
+watchlist:
+1. Checks that the Ollama model exists.
+2. Opens an `agent_runs` row.
+3. Runs each ticker, with one retry that keeps any horizon already saved.
+4. Closes the run as `ok`, `partial` or `error`.
+5. Sends the Telegram digest ([delivery/telegram.py](../delivery/telegram.py)), or an alert if the run
+   failed. Messages are plain text and split to stay under Telegram's 4096-character limit.
+
+[scripts/register_weekly_task.ps1](../scripts/register_weekly_task.ps1) schedules the run in Windows
+Task Scheduler (Saturday 09:00 by default; if the PC was off, it runs when it's next on).
+
+**Remaining lookahead risk.** With a past `--as-of`, every input is still limited to data from before
+that date, but the LLM's training data may contain hindsight [[3]](references.md#ref-3). Backtests
+with dates before the model's training cutoff should be treated as optimistic.
+
+## 8. Later phases (planned)
 
 | Phase | Module | Approach | References |
 |---|---|---|---|
-| P3 | M6 agent | A loop where the model alternates reasoning and tool calls, capped at a fixed number of steps; read-only tools plus `save_suggestion` | ReAct [[16]](references.md#ref-16), Toolformer [[17]](references.md#ref-17), Qwen2.5 [[18]](references.md#ref-18) |
 | P5 | M7 portfolio | QAOA on a binary asset-selection problem (QUBO), compared with classical solvers | QAOA [[19]](references.md#ref-19), QAOA portfolio benchmark [[20]](references.md#ref-20) |
 | P5 | M7 regime classifier | Quantum-kernel SVM on macro and price features | Havlíček et al. [[21]](references.md#ref-21) |
 | P5 | M10 evaluation | Hit rate, excess return, **calibration** of `confidence`, citation faithfulness | Guo et al. [[22]](references.md#ref-22), Gao et al. [[15]](references.md#ref-15) |

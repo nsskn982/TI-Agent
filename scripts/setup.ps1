@@ -3,12 +3,12 @@
     One-shot Windows setup for TI Agent: Python venv + Ollama.
 .EXAMPLE
     .\scripts\setup.ps1
-    .\scripts\setup.ps1 -OllamaModel qwen2.5:3b
+    .\scripts\setup.ps1 -OllamaModel qwen3.5:2b
     .\scripts\setup.ps1 -SkipOllama
 #>
 [CmdletBinding()]
 param(
-    [string]$OllamaModel = "qwen2.5:7b",
+    [string]$OllamaModel = "qwen3.5:4b",
     [switch]$SkipPython,
     [switch]$SkipOllama
 )
@@ -16,6 +16,17 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+
+# PowerShell 5.1 turns any stderr output from native tools (e.g. Ollama's progress
+# spinner) into a terminating error under "Stop". Run them under "Continue" and
+# check the exit code instead.
+function Invoke-Native {
+    param([string]$Exe, [string[]]$Arguments, [string]$What)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Exe @Arguments 2>&1 | Where-Object { $_ -is [string] } | Out-Host } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)." }
+}
 
 function Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
@@ -28,10 +39,9 @@ if (-not $SkipPython) {
 
     if (-not (Test-Path ".venv")) { & python -m venv .venv }
     $venvPy = Join-Path $Root ".venv\Scripts\python.exe"
-    & $venvPy -m pip install --upgrade pip
+    Invoke-Native $venvPy @("-m", "pip", "install", "--upgrade", "pip") "pip upgrade"
     if (Test-Path "requirements.txt") {
-        & $venvPy -m pip install -r requirements.txt
-        if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
+        Invoke-Native $venvPy @("-m", "pip", "install", "-r", "requirements.txt") "pip install"
     } else {
         Write-Warning "requirements.txt not found; skipping package install."
     }
@@ -49,7 +59,7 @@ if (-not $SkipOllama) {
     $settings = [ordered]@{
         OLLAMA_FLASH_ATTENTION = "1"
         OLLAMA_KV_CACHE_TYPE   = "q8_0"
-        OLLAMA_CONTEXT_LENGTH  = "8192"
+        OLLAMA_CONTEXT_LENGTH  = "16384"
         OLLAMA_KEEP_ALIVE      = "5m"
         OLLAMA_HOST            = "0.0.0.0:11434"
     }
@@ -63,9 +73,8 @@ if (-not $SkipOllama) {
     if ($null -eq $ollama) {
         Write-Warning "Ollama not found. Install from https://ollama.com/download, then re-run with -SkipPython."
     } else {
-        Step "Pulling $OllamaModel"
-        & ollama pull $OllamaModel
-        if ($LASTEXITCODE -ne 0) { throw "ollama pull failed." }
+        Step "Pulling $OllamaModel and creating trading-analyst (text-only)"
+        & (Join-Path $PSScriptRoot "create_model.ps1") -BaseModel $OllamaModel
         Write-Host "Restart Ollama so the new settings apply, then check 'ollama ps' shows 100% GPU." -ForegroundColor Yellow
     }
 }

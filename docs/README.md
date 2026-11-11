@@ -2,8 +2,8 @@
 
 | Document | Contents |
 |---|---|
-| [progress.md](progress.md) | Status of Phases 1 and 2: what's done, what has been checked, what blocks each gate, known limitations |
-| [architecture.md](architecture.md) | How modules M1–M5 work and why they are built this way, with citations; the no-lookahead rule; plans for later phases |
+| [progress.md](progress.md) | Status of Phases 1–3: what's done, what has been checked, what blocks each gate, known limitations |
+| [architecture.md](architecture.md) | How modules M1–M6, M8 and M9 work and why they are built this way, with citations; the no-lookahead rule; plans for later phases |
 | [references.md](references.md) | Bibliography: 22 arXiv papers (each checked against the arXiv API) and 2 other sources |
 | [references.bib](references.bib) | The same references in BibTeX |
 

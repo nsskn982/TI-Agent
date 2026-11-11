@@ -106,6 +106,11 @@ create table if not exists agent_runs (
     error           text
 );
 
+-- Phase 3: allow 'partial' (some tickers failed). Re-created so existing installs pick it up.
+alter table agent_runs drop constraint if exists agent_runs_status_check;
+alter table agent_runs add constraint agent_runs_status_check
+    check (status in ('running', 'ok', 'partial', 'error'));
+
 create table if not exists tool_calls (
     id              bigint generated always as identity primary key,
     run_id          bigint not null references agent_runs(id) on delete cascade,

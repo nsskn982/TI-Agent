@@ -95,6 +95,22 @@ class FakeStore:
             d.update(sentiment=r["sentiment"], sentiment_label=r["label"], scored_at="now")
         return len(rows)
 
+    # ---------------------------------------------------------------- phase 3
+    def start_agent_run(self, as_of, model):
+        self.__dict__.setdefault("agent_runs", {})
+        run_id = len(self.agent_runs) + 1
+        self.agent_runs[run_id] = {"as_of": as_of, "model": model, "status": "running"}
+        return run_id
+
+    def finish_agent_run(self, run_id, status, error=None):
+        self.agent_runs[run_id].update(status=status, error=error)
+
+    def log_tool_call(self, row):
+        self.__dict__.setdefault("tool_calls", []).append(row)
+
+    def upsert_suggestion(self, row):
+        self.__dict__.setdefault("suggestions", {})[(row["ticker"], row["horizon"], row["as_of"])] = row
+
     def get_document_meta(self, ids):
         return {i: {"id": i, "title": self.documents[i].get("title"), "url": self.documents[i].get("url")}
                 for i in ids if i in self.documents}
@@ -139,3 +155,10 @@ class FakeEmbedder:
             h = hashlib.sha256(t.encode()).digest()
             out.append([h[i % len(h)] / 255 for i in range(self.dim)])
         return out
+
+
+class FakeReranker:
+    """Keeps the incoming order (score = -position); no model download."""
+
+    def score(self, query, passages):
+        return [-float(i) for i in range(len(passages))]

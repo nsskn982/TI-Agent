@@ -82,9 +82,12 @@ identifier, title, first author and year all match. A BibTeX version is in
 *Toolformer: Language Models Can Teach Themselves to Use Tools.* 2023.
 [arXiv:2302.04761](https://arxiv.org/abs/2302.04761)
 
-<a id="ref-18"></a>**[18]** Qwen Team (A. Yang, B. Yang, B. Zhang, B. Hui, et al.).
-*Qwen2.5 Technical Report.* 2024.
-[arXiv:2412.15115](https://arxiv.org/abs/2412.15115)
+<a id="ref-18"></a>**[18]** A. Yang, A. Li, B. Yang, B. Zhang, et al.
+*Qwen3 Technical Report.* 2025.
+[arXiv:2505.09388](https://arxiv.org/abs/2505.09388)
+The project runs Qwen3.5 4B, which has no technical report on arXiv (as of 2026-11-11; the
+*Qwen3.5-Omni* report, arXiv:2604.15804, describes a different model). This is the report for the
+direct predecessor, which introduced the combined thinking and non-thinking modes that Qwen3.5 keeps.
 
 ## Quantum optimisation and quantum machine learning (Phase 5)
 
