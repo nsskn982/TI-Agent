@@ -1,0 +1,12 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+# Local configuration: Supabase URL and anon key (see config.example.json)
+config.json
