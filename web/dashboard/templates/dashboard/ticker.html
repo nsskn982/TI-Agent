@@ -81,7 +81,7 @@ details.table-view summary { cursor: pointer; color: var(--ink-2); }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
   integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
   crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   const data = JSON.parse(document.getElementById("series-data").textContent);
   const names = { ticker: "{{ ticker|escapejs }}", bench: "{{ bench|escapejs }}" };

@@ -2,6 +2,10 @@
 
     uvicorn quant.api:app --port 8000
     open http://localhost:8000/docs
+
+The API reads with the Supabase service key, so it is locked down: with no QUANT_API_TOKEN
+it only answers requests from this machine; with one set, every request needs
+`Authorization: Bearer <token>` (for example when binding to another interface).
 """
 from __future__ import annotations
 
@@ -9,11 +13,27 @@ from datetime import date
 from functools import lru_cache
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+import hmac
 
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+
+from common.config import env
 from quant import features
 
-app = FastAPI(title="TI Agent quant + retrieval", version="0.2.0")
+LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def require_access(request: Request) -> None:
+    token = env("QUANT_API_TOKEN")
+    if token:
+        given = request.headers.get("authorization", "")
+        if not hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
+            raise HTTPException(401, "missing or wrong bearer token")
+    elif (request.client.host if request.client else "") not in LOOPBACK:
+        raise HTTPException(403, "local requests only; set QUANT_API_TOKEN to allow remote access")
+
+
+app = FastAPI(title="TI Agent quant + retrieval", version="0.2.0", dependencies=[Depends(require_access)])
 
 
 @lru_cache(maxsize=1)

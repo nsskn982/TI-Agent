@@ -69,8 +69,13 @@ def send(text: str, token: str | None = None, chat_id: str | None = None,
         return False
     session = session or requests.Session()
     for part in split_message(text):
-        resp = session.post(API.format(token=token), json={
-            "chat_id": chat_id, "text": part, "disable_web_page_preview": True}, timeout=30)
+        try:
+            resp = session.post(API.format(token=token), json={
+                "chat_id": chat_id, "text": part, "disable_web_page_preview": True}, timeout=30)
+        except requests.RequestException as exc:
+            # requests puts the URL (and so the bot token) in its messages: log only the type.
+            log.error("Telegram send failed: %s (network error)", type(exc).__name__)
+            return False
         if resp.status_code != 200:
             # Never log the URL: it contains the bot token.
             log.error("Telegram send failed: HTTP %s %s", resp.status_code, resp.text[:200])

@@ -12,6 +12,10 @@ on:
         description: "Space-separated tickers (blank = watchlist.txt)"
         default: ""
 
+# The job only reads the repo; secrets come from the encrypted store.
+permissions:
+  contents: read
+
 concurrency:
   group: ingest
   cancel-in-progress: false
@@ -54,6 +58,12 @@ jobs:
           INPUT_DAYS: ${{ github.event.inputs.days || '5' }}
           INPUT_TICKERS: ${{ github.event.inputs.tickers }}
         run: |
+          # Inputs are passed via env (never ${{ }} inside the script) and validated.
+          [[ "$INPUT_DAYS" =~ ^[0-9]{1,4}$ ]] || { echo "days must be a number"; exit 1; }
+          re='^[A-Za-z][A-Za-z0-9.-]{0,9}( [A-Za-z][A-Za-z0-9.-]{0,9}){0,49}$'
+          if [ -n "$INPUT_TICKERS" ] && ! [[ "$INPUT_TICKERS" =~ $re ]]; then
+            echo "tickers: space-separated symbols starting with a letter (e.g. AAPL BRK.B)"; exit 1
+          fi
           if [ -n "$INPUT_TICKERS" ]; then
             python -m ingestion.run --days "$INPUT_DAYS" --tickers $INPUT_TICKERS
           else

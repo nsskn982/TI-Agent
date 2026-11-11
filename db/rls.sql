@@ -42,3 +42,31 @@ grant select on tickers, prices, suggestions, portfolio_runs, performance to aut
 revoke execute on function match_chunks(vector, timestamptz, int, text, text) from public, anon, authenticated;
 revoke execute on function keyword_chunks(text, timestamptz, int, text, text) from public, anon, authenticated;
 revoke execute on function set_sentiment(jsonb) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------- app (Flutter) access
+-- The app signs in with Supabase Auth and reads with the anon key, so everything below is
+-- what a signed-in user can see. Turn OFF public sign-ups in Supabase (Authentication ->
+-- Sign In / Providers -> "Allow new users to sign up") and invite users instead; otherwise
+-- anyone could create an account and become `authenticated`.
+
+-- Run summaries, without the error column (it can hold stack traces / local paths).
+drop policy if exists "authenticated read" on agent_runs;
+create policy "authenticated read" on agent_runs for select to authenticated using (true);
+revoke select on agent_runs from authenticated;
+grant select (id, as_of, model, started_at, finished_at, status) on agent_runs to authenticated;
+
+-- Cited passages: only chunks that some suggestion actually cites, at most 20 per call.
+-- SECURITY DEFINER reads chunks/documents (which stay closed to the app) on the caller's behalf.
+create or replace function app_citations(ids bigint[])
+returns table (id bigint, ticker text, source text, doc_type text, published_at timestamptz,
+               content text, title text, url text)
+language sql stable security definer set search_path = public as $$
+    select c.id, c.ticker, c.source, c.doc_type, c.published_at, c.content, d.title,
+           case when d.url ~* '^https?://' then d.url end
+    from chunks c
+    join documents d on d.id = c.document_id
+    where c.id = any(ids[1:20])
+      and exists (select 1 from suggestions s where ('chunk_' || c.id) = any(s.sources))
+$$;
+revoke execute on function app_citations(bigint[]) from public, anon;
+grant execute on function app_citations(bigint[]) to authenticated, service_role;
