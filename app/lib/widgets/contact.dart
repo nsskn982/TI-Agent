@@ -9,7 +9,7 @@ class ContactLink {
   const ContactLink(this.label, this.icon, this.url);
 
   final String label;
-  final IconData icon;
+  final FaIconData icon; // font_awesome_flutter 11: its own type, drawn with FaIcon (not Icon)
   final String url;
 }
 

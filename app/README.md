@@ -13,7 +13,7 @@ Tap a source chip to read the exact passage a suggestion cites. Tap **Chart and 
 | Platform | How it's built | Where it goes |
 |---|---|---|
 | **Web** | Automatically by GitHub Actions ([app.yml](../.github/workflows/app.yml)) on every push to `main` | GitHub Pages: `https://nsskn982.github.io/TI-Agent/` |
-| **Android** | `flutter build apk` on your PC | Send the APK to invited testers |
+| **Android** | Automatically by the same workflow (or `flutter build apk` on your PC) | Actions → latest *App (Flutter)* run → **Artifacts → `ti-agent-apk`** (kept 30 days). Unzip and send `ti-agent.apk` to invited testers |
 | **iOS** | `flutter build ipa` on a **Mac** with Xcode (Apple requires it) | TestFlight, which needs an Apple Developer account ($99/year) |
 
 > **Status:** written but not yet compiled. The first push to `main` runs `flutter analyze` and
