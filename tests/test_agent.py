@@ -318,3 +318,45 @@ def test_numbers_with_units_in_passages_are_sources():
     assert unsupported_numbers("A $100B buyback supports the stock.", source_numbers([passage])) == []
     assert unsupported_numbers("A $90B buyback supports the stock.", source_numbers([passage])) == ["$90B"]
     assert unsupported_numbers("Revenue base of $478.8B.", source_numbers(['{"revenue_ttm":478834000000}'])) == []
+
+
+def test_ollama_retries_model_load_oom_then_succeeds():
+    class Flaky(_OllamaSession):
+        def __init__(self):
+            super().__init__({"role": "assistant", "content": "ok"})
+            self.fail = 2
+
+        def post(self, url, json, timeout):
+            self.payloads.append((url, dict(json)))
+            if self.fail:
+                self.fail -= 1
+                r = _Resp({}, status=500)
+                r.text = '{"error":"llama-server reported out-of-memory during startup: cudaMalloc failed"}'
+                return r
+            r = _Resp({"message": self.chat_reply})
+            r.text = ""
+            return r
+
+    s = Flaky()
+    c = OllamaClient(url="http://x", session=s)
+    waits = []
+    c._sleep = waits.append
+    assert c.chat([], [])["content"] == "ok"
+    assert waits == [15.0, 30.0] and s.payloads[-1][1]["keep_alive"] == "30m"
+
+    s2 = Flaky()
+    s2.fail = 99
+    c2 = OllamaClient(url="http://x", session=s2)
+    c2._sleep = lambda _: None
+    with pytest.raises(LLMError, match="short on memory"):
+        c2.warmup()
+    assert s2.payloads[0][0].endswith("/api/generate") and len(s2.payloads) == 4  # 1 + 3 retries
+
+
+def test_field_names_and_dates_are_not_number_sources():
+    feats = '{"price":{"sma_50":180.2,"ret_12m":0.28,"last_date":"2026-11-10"},"fundamentals":{"net_margin":0.32}}'
+    src = source_numbers([feats])
+    assert unsupported_numbers("Net margin of 50%.", src) == ["50%"]       # "50" only exists in a key
+    assert unsupported_numbers("Up 12.0% over a year.", src) == ["12.0%"]  # "12" only in "ret_12m"
+    assert unsupported_numbers("Net margin of 32%; up 28% in a year.", src) == []
+    assert unsupported_numbers("Moved 11.0%.", src) == ["11.0%"]          # "11" only in the date

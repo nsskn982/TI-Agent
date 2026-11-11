@@ -84,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     llm = OllamaClient()
     try:
         llm.check()
+        # Load the model before this process loads MiniLM/torch, so it gets memory first.
+        log.info("Loading %s into Ollama...", llm.model)
+        llm.warmup()
     except LLMError as exc:
         log.error("%s", exc)
         if notify:

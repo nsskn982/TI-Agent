@@ -34,7 +34,13 @@ TOOL_SPECS: list[dict] = [
     }},
     {"type": "function", "function": {
         "name": "get_features",
-        "description": "Computed technicals, TTM fundamentals and news sentiment for a ticker.",
+        "description": "Computed technicals, TTM fundamentals and news sentiment for a ticker. Ratios are "
+                       "fractions (0.151 = 15.1%). Fields: ret_1m/3m/6m/12m = price return over that window; "
+                       "pct_vs_sma_50/200 = distance from that moving average; pct_from_52w_high/low = distance "
+                       "from the 52-week extreme; vol_20d = annualised volatility; rel_strength_3m = 3-month "
+                       "return minus the benchmark's; revenue_growth_yoy = TTM vs a year earlier; fcf_ttm = free "
+                       "cash flow in dollars; fcf_yield = fcf_ttm / market_cap; sentiment mean_* = FinBERT score "
+                       "from -1 to 1. Always name the field you quote correctly.",
         "parameters": {"type": "object", "properties": {
             "ticker": {"type": "string", "description": "Defaults to the ticker being analysed"},
         }},
