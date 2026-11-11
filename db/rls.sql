@@ -13,6 +13,7 @@ alter table suggestions     enable row level security;
 alter table portfolio_runs  enable row level security;
 alter table performance     enable row level security;
 alter table ingestion_runs  enable row level security;
+alter table fundamentals    enable row level security;
 
 drop policy if exists "authenticated read" on tickers;
 create policy "authenticated read" on tickers        for select to authenticated using (true);
@@ -31,4 +32,5 @@ create policy "authenticated read" on performance    for select to authenticated
 
 -- Retrieval functions are for the service role only.
 revoke execute on function match_chunks(vector, timestamptz, int, text, text) from public, anon, authenticated;
-revoke execute on function keyword_chunks(text, timestamptz, int, text) from public, anon, authenticated;
+revoke execute on function keyword_chunks(text, timestamptz, int, text, text) from public, anon, authenticated;
+revoke execute on function set_sentiment(jsonb) from public, anon, authenticated;

@@ -6,7 +6,8 @@ same method names (see tests/fakes.py).
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Sequence
+from datetime import date
+from typing import Any, Callable, Iterable, Sequence
 
 from common.config import require
 
@@ -67,6 +68,17 @@ class Store:
     def mark_failed(self, document_id: int, error: str) -> None:
         self.db.table("documents").update({"process_error": error[:2000]}).eq("id", document_id).execute()
 
+    def upsert_fundamentals(self, rows: Sequence[dict]) -> int:
+        return self._upsert("fundamentals", rows, "ticker,concept,unit,period_start,period_end,accn")
+
+    def set_sentiment(self, rows: Sequence[dict]) -> int:
+        """rows: [{"id", "sentiment", "label"}] — one RPC per batch instead of one UPDATE per row."""
+        n = 0
+        for batch in _batches(list(rows), 200):
+            res = self.db.rpc("set_sentiment", {"payload": list(batch)}).execute()
+            n += int(res.data or 0)
+        return n
+
     def log_run(self, row: dict) -> None:
         try:
             self.db.table("ingestion_runs").insert(row).execute()
@@ -99,3 +111,78 @@ class Store:
     def active_tickers(self) -> list[str]:
         res = self.db.table("tickers").select("symbol").eq("active", True).execute()
         return [r["symbol"] for r in (res.data or [])]
+
+    # PostgREST caps responses (1000 rows by default), so page through.
+    def _select_all(self, build: Callable[[], Any], page: int = 1000) -> list[dict]:
+        out: list[dict] = []
+        start = 0
+        while True:
+            rows = build().range(start, start + page - 1).execute().data or []
+            out.extend(rows)
+            if len(rows) < page:
+                return out
+            start += page
+
+    def get_prices(self, ticker: str, start: date, before: date) -> list[dict]:
+        """Daily bars with start <= date < before (strictly before the as-of date)."""
+        return self._select_all(
+            lambda: self.db.table("prices")
+            .select("date,close,adj_close,volume")
+            .eq("ticker", ticker)
+            .gte("date", start.isoformat())
+            .lt("date", before.isoformat())
+            .order("date")
+        )
+
+    def get_macro(self, series_ids: Sequence[str], start: date, before: date) -> list[dict]:
+        return self._select_all(
+            lambda: self.db.table("macro_series")
+            .select("series_id,date,value")
+            .in_("series_id", list(series_ids))
+            .gte("date", start.isoformat())
+            .lt("date", before.isoformat())
+            .order("date")
+        )
+
+    def get_fundamentals(self, ticker: str, before: date) -> list[dict]:
+        """Facts whose filing was public before the as-of date."""
+        return self._select_all(
+            lambda: self.db.table("fundamentals")
+            .select("concept,unit,period_start,period_end,value,form,filed")
+            .eq("ticker", ticker)
+            .lt("filed", before.isoformat())
+            .order("filed")
+        )
+
+    def get_news_sentiment(self, ticker: str, start: date, before: date) -> list[dict]:
+        return self._select_all(
+            lambda: self.db.table("documents")
+            .select("published_at,sentiment")
+            .eq("ticker", ticker)
+            .eq("source", "news")
+            .not_.is_("sentiment", "null")
+            .gte("published_at", start.isoformat())
+            .lt("published_at", before.isoformat())
+            .order("published_at")
+        )
+
+    def fetch_unscored_news(self, limit: int = 200) -> list[dict]:
+        res = (
+            self.db.table("documents")
+            .select("id,title,body")
+            .eq("source", "news")
+            .is_("scored_at", "null")
+            .order("ingested_at")
+            .limit(limit)
+            .execute()
+        )
+        return list(res.data or [])
+
+    def get_document_meta(self, ids: Sequence[int]) -> dict[int, dict]:
+        if not ids:
+            return {}
+        res = self.db.table("documents").select("id,title,url").in_("id", list(ids)).execute()
+        return {r["id"]: r for r in (res.data or [])}
+
+    def rpc(self, name: str, params: dict) -> list[dict]:
+        return list(self.db.rpc(name, params).execute().data or [])

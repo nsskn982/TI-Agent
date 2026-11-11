@@ -1,0 +1,12 @@
+[
+  {"ticker": "AAPL", "query": "iPhone demand and sales in China", "expect_any": ["iphone", "china"]},
+  {"ticker": "AAPL", "source": "filing", "query": "supply chain and manufacturing concentration risk", "expect_any": ["supply", "manufactur", "outsourc"]},
+  {"ticker": "MSFT", "query": "Azure cloud revenue growth", "expect_any": ["azure", "cloud"]},
+  {"ticker": "MSFT", "query": "capital expenditures on AI data centers", "expect_any": ["capital expenditure", "data center", "datacenter", "infrastructure"]},
+  {"ticker": "NVDA", "query": "export restrictions on chip sales to China", "expect_any": ["export", "restrict", "china"]},
+  {"ticker": "NVDA", "query": "data center GPU demand", "expect_any": ["data center", "gpu", "blackwell", "hopper"]},
+  {"ticker": "GOOGL", "query": "antitrust lawsuits over search", "expect_any": ["antitrust", "department of justice", "doj", "court", "competition"]},
+  {"ticker": "GOOGL", "query": "YouTube advertising revenue", "expect_any": ["youtube", "advertis"]},
+  {"ticker": "AMZN", "query": "AWS operating income and margins", "expect_any": ["aws", "operating income", "margin"]},
+  {"ticker": "AMZN", "source": "filing", "query": "competitive risks in retail and e-commerce", "expect_any": ["compet"]}
+]

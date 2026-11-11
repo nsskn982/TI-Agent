@@ -16,13 +16,20 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from common import logging_setup
-from common.config import ROOT, env, env_int, require
+from common.config import ROOT, benchmark, env, env_int, require
 from common.http import make_session
-from ingestion import edgar, finnhub, fred, prices
+from ingestion import edgar, finnhub, fred, fundamentals, prices
 
 log = logging.getLogger("ingestion")
 
-SOURCES = ("prices", "news", "filings", "macro")
+SOURCES = ("prices", "news", "filings", "fundamentals", "macro")
+
+# Adjusted closes are re-based whenever a dividend/split happens, so stored
+# history is refreshed in full each run instead of appending only new days.
+PRICE_HISTORY_DAYS = 800
+# A TTM figure a year ago needs facts filed up to ~2 years before the window.
+FUNDAMENTALS_EXTRA_DAYS = 760
+
 
 
 def load_watchlist(cli: list[str] | None) -> list[str]:
@@ -68,31 +75,36 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
     edgar_session = None
     cik_map: dict[str, dict] = {}
     # The EDGAR ticker map also gives us company names/CIKs for the tickers table.
-    if "filings" in sources or not dry_run:
+    needs_edgar = "filings" in sources or "fundamentals" in sources
+    if needs_edgar or not dry_run:
         try:
             edgar_session = make_session(require("SEC_USER_AGENT"))
             cik_map = edgar.load_cik_map(edgar_session)
         except Exception as exc:
             edgar_session = None
-            if "filings" in sources:
+            if needs_edgar:
                 run.fail("edgar", "ticker_map", exc)
             else:
                 log.warning("EDGAR ticker map unavailable (%s); ticker names left blank", exc)
 
     # Tickers must exist before rows referencing them.
     # Without the CIK map, don't overwrite previously stored names/CIKs with nulls.
+    # The benchmark (SPY) gets prices only, for beta/relative strength and M10 scoring.
+    bench = benchmark()
+    price_tickers = tickers + ([bench] if bench not in tickers else [])
     ticker_rows = [
-        {"symbol": t, "active": True}
+        {"symbol": t, "active": t in tickers}
         | ({"name": cik_map.get(t, {}).get("name"), "cik": cik_map.get(t, {}).get("cik")} if cik_map else {})
-        for t in tickers
+        for t in price_tickers
     ]
     if not dry_run:
         store.upsert_tickers(ticker_rows)
 
     if "prices" in sources:
-        for t in tickers:
+        price_since = today - timedelta(days=max(days, PRICE_HISTORY_DAYS))
+        for t in price_tickers:
             try:
-                rows = prices.fetch_prices(t, since)
+                rows = prices.fetch_prices(t, price_since)
                 if not rows:
                     raise ValueError("no price rows returned")
                 run.write("prices", "upsert_prices", rows)
@@ -128,6 +140,18 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
                 run.write("filings", "insert_documents", docs)
             except Exception as exc:
                 run.fail("filings", t, exc)
+
+    if "fundamentals" in sources and edgar_session is not None:
+        filed_since = since - timedelta(days=FUNDAMENTALS_EXTRA_DAYS)
+        for t in tickers:
+            info = cik_map.get(t)
+            if info is None:
+                continue
+            try:
+                rows = fundamentals.fetch_fundamentals(edgar_session, t, info["cik"], filed_since)
+                run.write("fundamentals", "upsert_fundamentals", rows)
+            except Exception as exc:
+                run.fail("fundamentals", t, exc)
 
     if "macro" in sources:
         session = make_session()
