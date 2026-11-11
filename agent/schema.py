@@ -9,6 +9,14 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 CITATION = re.compile(r"^chunk_\d+$")
+# Qwen sometimes drifts into Chinese mid-sentence ("AI adoption不及预期"). CJK, kana, hangul.
+NON_ENGLISH = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯＀-￯]")
+
+
+def _english(text: str, field: str) -> str:
+    if NON_ENGLISH.search(text):
+        raise ValueError(f"{field} must be written in English only (found non-English characters)")
+    return text
 
 
 class Suggestion(BaseModel):
@@ -23,10 +31,15 @@ class Suggestion(BaseModel):
     confidence: float = Field(ge=0, le=1)
     as_of: date
 
+    @field_validator("thesis")
+    @classmethod
+    def _thesis(cls, v: str) -> str:
+        return _english(v, "thesis")
+
     @field_validator("risks")
     @classmethod
     def _risks(cls, v: list[str]) -> list[str]:
-        v = [r.strip() for r in v if r and r.strip()]
+        v = [_english(r.strip(), "each risk") for r in v if r and r.strip()]
         if not v:
             raise ValueError("at least one non-empty risk is required")
         if any(len(r) > 300 for r in v):
@@ -60,23 +73,50 @@ _SCALE = {"t": 1e12, "tn": 1e12, "trillion": 1e12, "b": 1e9, "bn": 1e9, "billion
           "m": 1e6, "mn": 1e6, "million": 1e6}
 
 
-def source_numbers(texts: list[str]) -> list[float]:
-    """Every number in the tool outputs, plus unit-scaled values from prose.
-
-    Filing passages say things like "$100 billion", so "100" alone isn't enough:
-    the scaled value (1e11) is added too, matching how claims are parsed.
-    """
+def _numbers_in_prose(text: str) -> list[float]:
     out = []
+    for m in _SOURCE_NUM.findall(text):
+        try:
+            out.append(abs(float(m)))
+        except ValueError:
+            pass
+    # Passages say "$100 billion": add the scaled value too, matching how claims are parsed.
+    for m in _CLAIM.finditer(text):
+        unit = (m.group(3) or "").lower()
+        if unit in _SCALE:
+            out.append(abs(float(m.group(2).replace(",", ""))) * _SCALE[unit])
+    return out
+
+
+def _walk(obj, out: list[float]) -> None:
+    """Collect numeric *values* from parsed JSON. Keys are skipped on purpose: a field
+    name like `sma_50` or `ret_12m` must not count as evidence for "50%" or "12%"."""
+    if isinstance(obj, bool) or obj is None:
+        return
+    if isinstance(obj, (int, float)):
+        out.append(abs(float(obj)))
+    elif isinstance(obj, str):
+        if not _DATE.match(obj):  # "2026-11-10" is a date, not the numbers 2026, 11, 10
+            out.extend(_numbers_in_prose(obj))
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _walk(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            _walk(v, out)
+
+
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def source_numbers(texts: list[str]) -> list[float]:
+    """Every number a tool returned: JSON values (not keys) and numbers in passage text."""
+    out: list[float] = []
     for t in texts:
-        for m in _SOURCE_NUM.findall(t):
-            try:
-                out.append(abs(float(m)))
-            except ValueError:
-                pass
-        for m in _CLAIM.finditer(t):
-            unit = (m.group(3) or "").lower()
-            if unit in _SCALE:
-                out.append(abs(float(m.group(2).replace(",", ""))) * _SCALE[unit])
+        try:
+            _walk(json.loads(t.removesuffix("...[truncated]")), out)
+        except (json.JSONDecodeError, ValueError):
+            out.extend(_numbers_in_prose(t))  # plain-text or truncated result
     return out
 
 

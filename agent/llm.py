@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 
 import requests
@@ -58,6 +59,11 @@ class OllamaClient:
         self.think = think if think is not None else (env("OLLAMA_THINK", "true") or "true").lower() != "false"
         self.session = session or requests.Session()
         self.last_thinking = ""
+        # Keep the model resident between turns and tickers, so a weekly run loads it once.
+        self.keep_alive = env("OLLAMA_KEEP_ALIVE", "30m")
+        self.load_retries = 3
+        self.retry_wait_s = 15.0
+        self._sleep = time.sleep
 
     def models(self) -> list[str]:
         try:
@@ -74,25 +80,56 @@ class OllamaClient:
             raise LLMError(f"Model {self.model!r} not found in Ollama (have: {names}). "
                            f"Run: ollama create {self.model} -f agent/Modelfile")
 
+    def _post(self, path: str, payload: dict) -> requests.Response:
+        """POST with retries for model-load failures (e.g. Windows out of commit memory).
+
+        Ollama loads the model lazily on the first request; if the machine is short on
+        memory at that moment the load fails with HTTP 500 but succeeds once memory frees
+        up, so wait and retry a few times instead of failing the whole ticker.
+        """
+        for attempt in range(self.load_retries + 1):
+            try:
+                resp = self.session.post(f"{self.url}{path}", json=payload, timeout=self.timeout)
+            except requests.RequestException as exc:
+                raise LLMError(f"Ollama request failed: {exc}") from exc
+            body = getattr(resp, "text", "") or ""
+            transient = resp.status_code >= 500 and any(
+                k in body.lower() for k in ("memory", "load failed", "llama-server", "terminated"))
+            if not transient or attempt == self.load_retries:
+                return resp
+            self._sleep(self.retry_wait_s * (attempt + 1))
+        return resp  # pragma: no cover
+
+    @staticmethod
+    def _raise(resp: requests.Response, what: str) -> None:
+        if resp.status_code >= 400:
+            body = (getattr(resp, "text", "") or "")[:400]
+            hint = (" (Ollama could not load the model: the machine is short on memory. Close memory-heavy "
+                    "apps such as browser tabs, or enlarge the Windows page file.)") if "memory" in body.lower() else ""
+            raise LLMError(f"{what}: HTTP {resp.status_code}: {body}{hint}")
+
+    def warmup(self) -> None:
+        """Load the model now, before the run allocates its own memory (embedder, reranker)."""
+        resp = self._post("/api/generate", {"model": self.model, "prompt": "", "keep_alive": self.keep_alive,
+                                            "options": {"num_ctx": self.num_ctx}})
+        self._raise(resp, "Ollama model load failed")
+
     def chat(self, messages: list[dict], tools: list[dict]) -> dict:
         payload = {
             "model": self.model, "messages": messages, "tools": tools, "stream": False,
-            "think": self.think,
+            "think": self.think, "keep_alive": self.keep_alive,
             # Sampling comes from the Modelfile (Qwen's recommended settings for thinking mode)
             # unless a temperature is passed explicitly.
             "options": {"num_ctx": self.num_ctx}
             | ({"temperature": self.temperature} if self.temperature is not None else {}),
         }
-        try:
-            resp = self.session.post(f"{self.url}/api/chat", json=payload, timeout=self.timeout)
-            if resp.status_code == 400 and self.think and "think" in resp.text.lower():
-                # Model without thinking support (e.g. qwen2.5): retry plain and remember.
-                self.think = False
-                payload["think"] = False
-                resp = self.session.post(f"{self.url}/api/chat", json=payload, timeout=self.timeout)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            raise LLMError(f"Ollama chat failed: {exc}") from exc
+        resp = self._post("/api/chat", payload)
+        if resp.status_code == 400 and self.think and "think" in (getattr(resp, "text", "") or "").lower():
+            # Model without thinking support (e.g. qwen2.5): retry plain and remember.
+            self.think = False
+            payload["think"] = False
+            resp = self._post("/api/chat", payload)
+        self._raise(resp, "Ollama chat failed")
         msg = resp.json().get("message") or {}
         self.last_thinking = msg.get("thinking") or ""
         calls = msg.get("tool_calls") or parse_text_tool_calls(msg.get("content", ""))

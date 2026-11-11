@@ -1,0 +1,181 @@
+{% extends "dashboard/base.html" %}{% load ti %}
+{% block title %}{{ ticker }}{% endblock %}
+{% block head %}
+<style>
+.chart-card { padding: 16px 16px 8px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); margin: 0 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.chart-box { position: relative; height: 300px; }
+details.table-view { margin-top: 8px; font-size: 13px; }
+details.table-view summary { cursor: pointer; color: var(--ink-2); }
+.two { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 760px) { .two { grid-template-columns: 1fr; } .chart-box { height: 240px; } }
+</style>
+{% endblock %}
+{% block content %}
+<p class="muted" style="margin:0 0 8px"><a href="{% url 'home' %}">← All suggestions</a></p>
+<h1>{{ ticker }}</h1>
+<p class="sub">Last close {{ features.price.last_close|num:2 }} on {{ features.price.last_date|default:"–" }} · stance is relative to {{ bench }}</p>
+
+<section class="card chart-card" aria-labelledby="chart-title">
+  <h2 id="chart-title" style="margin:0 0 4px">{{ ticker }} vs {{ bench }}, last 12 months</h2>
+  <p class="muted" style="margin:0 0 10px;font-size:13px">Adjusted close, both indexed to 100 at the start of the window.</p>
+  <div class="legend" aria-hidden="true">
+    <span><i style="background:var(--series-1)"></i>{{ ticker }}</span>
+    <span><i style="background:var(--series-2)"></i>{{ bench }}</span>
+  </div>
+  <div class="chart-box"><canvas id="px" role="img" aria-label="{{ ticker }} and {{ bench }} indexed price over the last 12 months"></canvas></div>
+  <details class="table-view"><summary>Show as table (month-end values)</summary>
+    <div class="scroll" style="margin-top:8px"><table class="data" id="px-table">
+      <thead><tr><th>Date</th><th class="n">{{ ticker }} (index)</th><th class="n">{{ bench }} (index)</th></tr></thead><tbody></tbody>
+    </table></div>
+  </details>
+</section>
+
+<h2>Latest view</h2>
+<div class="two">
+  <div class="card">{% if latest.medium %}{% include "dashboard/_suggestion.html" with s=latest.medium %}<p class="muted" style="font-size:12px;margin:8px 0 0">As of {{ latest.medium.as_of }}</p>{% else %}<p class="muted">No 1–3 month view yet.</p>{% endif %}</div>
+  <div class="card">{% if latest.long %}{% include "dashboard/_suggestion.html" with s=latest.long %}<p class="muted" style="font-size:12px;margin:8px 0 0">As of {{ latest.long.as_of }}</p>{% else %}<p class="muted">No 6–24 month view yet.</p>{% endif %}</div>
+</div>
+
+{% with p=features.price f=features.fundamentals se=features.sentiment %}
+<h2>Computed features <span class="muted" style="font-weight:400;font-size:13px">(what the agent sees; numbers come from code)</span></h2>
+<dl class="kv">
+  <div><dt>1-month return</dt><dd>{{ p.ret_1m|pct }}</dd></div>
+  <div><dt>3-month return</dt><dd>{{ p.ret_3m|pct }}</dd></div>
+  <div><dt>12-month return</dt><dd>{{ p.ret_12m|pct }}</dd></div>
+  <div><dt>3-month vs {{ bench }}</dt><dd>{{ p.rel_strength_3m|pct }}</dd></div>
+  <div><dt>vs 200-day average</dt><dd>{{ p.pct_vs_sma_200|pct }}</dd></div>
+  <div><dt>RSI (14)</dt><dd>{{ p.rsi_14|num:0 }}</dd></div>
+  <div><dt>Volatility (60d, ann.)</dt><dd>{{ p.vol_60d|pct_plain }}</dd></div>
+  <div><dt>Beta (1y)</dt><dd>{{ p.beta_1y|num:2 }}</dd></div>
+  <div><dt>Revenue (TTM)</dt><dd>{{ f.revenue_ttm|money }}</dd></div>
+  <div><dt>Revenue growth (YoY)</dt><dd>{{ f.revenue_growth_yoy|pct }}</dd></div>
+  <div><dt>Operating margin</dt><dd>{{ f.operating_margin|pct_plain }}</dd></div>
+  <div><dt>P/E (TTM)</dt><dd>{{ f.pe_ttm|num:1 }}</dd></div>
+  <div><dt>FCF yield</dt><dd>{{ f.fcf_yield|pct }}</dd></div>
+  <div><dt>Debt / equity</dt><dd>{{ f.debt_to_equity|num:2 }}</dd></div>
+  <div><dt>News sentiment (30d)</dt><dd>{{ se.mean_30d|num:2 }}</dd></div>
+  <div><dt>Headlines (30d)</dt><dd>{{ se.n_30d|default:"0" }}</dd></div>
+</dl>
+{% if f.period_end %}<p class="muted" style="font-size:12px">Fundamentals: latest quarter ending {{ f.period_end }}, from filings public before today.</p>{% endif %}
+{% endwith %}
+
+<h2>History</h2>
+{% if history %}
+<div class="scroll"><table class="data">
+  <thead><tr><th>As of</th><th>Horizon</th><th>Stance</th><th class="n">Confidence</th><th>Thesis</th></tr></thead>
+  <tbody>{% for s in history %}
+    <tr><td>{{ s.as_of }}</td><td>{% if s.horizon == 'medium' %}1–3m{% else %}6–24m{% endif %}</td>
+      <td><span class="badge stance-{{ s.stance }}"><span class="dot" aria-hidden="true"></span>{{ s.stance }}</span></td>
+      <td class="n">{{ s.confidence|pct_plain:0 }}</td><td>{{ s.thesis|truncatechars:160 }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<div class="card empty">No suggestions for {{ ticker }} yet.</div>{% endif %}
+
+{{ series|json_script:"series-data" }}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+  integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById("series-data").textContent);
+  const names = { ticker: "{{ ticker|escapejs }}", bench: "{{ bench|escapejs }}" };
+
+  // Month-end table view (accessibility / no-JS-chart fallback).
+  const tbody = document.querySelector("#px-table tbody");
+  const benchBy = Object.fromEntries(data.bench.map(p => [p.date, p.value]));
+  const monthEnd = {};
+  data.ticker.forEach(p => { monthEnd[p.date.slice(0, 7)] = p; });
+  Object.values(monthEnd).forEach(p => {
+    const tr = document.createElement("tr");
+    [p.date, p.value.toFixed(1), benchBy[p.date] != null ? benchBy[p.date].toFixed(1) : "–"].forEach((v, i) => {
+      const td = document.createElement("td"); td.textContent = v; if (i) td.className = "n"; tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  if (!window.Chart || !data.ticker.length) return;
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  // Direct labels at the line ends, in text ink (identity comes from the swatch, not text colour).
+  const endLabels = {
+    id: "endLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      ctx.save();
+      ctx.font = "600 12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+      ctx.textBaseline = "middle";
+      const placed = [];
+      chart.data.datasets.forEach((ds, i) => {
+        const meta = chart.getDatasetMeta(i);
+        const pt = meta.data[meta.data.length - 1];
+        if (!pt) return;
+        let y = pt.y;
+        placed.forEach(py => { if (Math.abs(py - y) < 14) y = py + (y >= py ? 14 : -14); });
+        placed.push(y);
+        ctx.fillStyle = ds.borderColor;
+        ctx.fillRect(pt.x + 6, y - 1, 8, 2);
+        ctx.fillStyle = css("--ink-2");
+        ctx.fillText(ds.label, pt.x + 18, y);
+      });
+      ctx.restore();
+    }
+  };
+
+  // Vertical crosshair on hover.
+  const crosshair = {
+    id: "crosshair",
+    afterDraw(chart) {
+      const active = chart.tooltip && chart.tooltip.getActiveElements();
+      if (!active || !active.length) return;
+      const x = active[0].element.x, { top, bottom } = chart.chartArea, ctx = chart.ctx;
+      ctx.save(); ctx.strokeStyle = css("--axis"); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke(); ctx.restore();
+    }
+  };
+
+  let chart;
+  function draw() {
+    if (chart) chart.destroy();
+    const line = (key, color) => ({
+      label: names[key], data: data[key].map(p => ({ x: p.date, y: p.value, price: p.price })),
+      borderColor: css(color), backgroundColor: css(color), borderWidth: 2, pointRadius: 0,
+      pointHoverRadius: 4, pointHoverBorderWidth: 2, pointHoverBorderColor: css("--surface"), tension: 0,
+    });
+    chart = new Chart(document.getElementById("px"), {
+      type: "line",
+      data: { datasets: [line("ticker", "--series-1"), line("bench", "--series-2")] },
+      options: {
+        maintainAspectRatio: false, animation: false,
+        layout: { padding: { right: 56 } },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { type: "category", labels: data.ticker.map(p => p.date),
+               ticks: { color: css("--muted"), maxTicksLimit: 7, autoSkip: true, maxRotation: 0,
+                        callback(v) { const d = this.getLabelForValue(v); return d ? d.slice(0, 7) : ""; } },
+               grid: { display: false }, border: { color: css("--axis") } },
+          y: { ticks: { color: css("--muted"), maxTicksLimit: 6 }, grid: { color: css("--grid") },
+               border: { display: false }, title: { display: true, text: "Index (start = 100)", color: css("--muted") } },
+        },
+        plugins: {
+          legend: { display: false },  // HTML legend above the chart
+          tooltip: {
+            backgroundColor: css("--surface"), titleColor: css("--ink"), bodyColor: css("--ink-2"),
+            borderColor: css("--border"), borderWidth: 1, padding: 10, boxWidth: 8, boxHeight: 8, usePointStyle: true,
+            callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y.toFixed(1)} (price ${c.raw.price.toFixed(2)})` },
+          },
+        },
+      },
+      plugins: [endLabels, crosshair],
+    });
+  }
+  draw();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+})();
+</script>
+{% endblock %}

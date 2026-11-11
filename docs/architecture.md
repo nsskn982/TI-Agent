@@ -227,7 +227,32 @@ Task Scheduler (Saturday 09:00 by default; if the PC was off, it runs when it's 
 that date, but the LLM's training data may contain hindsight [[3]](references.md#ref-3). Backtests
 with dates before the model's training cutoff should be treated as optimistic.
 
-## 8. Later phases (planned)
+## 8. Website (M9, Django)
+
+[web/](../web/) is a server-rendered Django site. Data comes from Supabase through a read-only `Repo`
+([web/dashboard/repo.py](../web/dashboard/repo.py)) that uses the same `Store` as the pipeline. The
+service key stays on the server. Django's SQLite database holds only users and sessions, which keeps
+access invite-only (the README's guardrail on MAR exposure) without a public sign-up flow.
+
+- **Escaping.** Everything the LLM writes passes through Django's auto-escaping, and links to sources are
+  rendered only for `http(s)` URLs.
+- **Chart.** The price chart shows the ticker and the benchmark indexed to 100, because their prices are
+  on different scales and should never share a dual axis. Chart.js 4.4.1 loads from cdnjs with an SRI
+  hash. Colours come from a validated two-series palette for light and dark mode, the lines carry direct
+  end labels, hovering shows a crosshair and tooltip, and a month-end table gives the same data without
+  the chart.
+- **Caching.** Features are cached for 10 minutes per ticker per day.
+- **Scroll story.** The home page uses no animation library. On wide, tall screens each ticker scene
+  pins for about 1.4 screens of scrolling while a script maps scroll position to CSS variables (0 to 1)
+  that drive the symbol, the two views and the exit fade, like scrubbing a video. A scene whose content
+  can't fit one screen just scrolls normally. On phones and short windows elements fade up as they
+  appear instead. With `prefers-reduced-motion` or no JavaScript, it's a plain page with everything
+  visible. Each view is compared with the previous good run and marked new, changed or unchanged.
+
+The Flutter app will read the same tables directly with the anon key and Supabase Auth, under the
+`authenticated` policies in `db/rls.sql`.
+
+## 9. Later phases (planned)
 
 | Phase | Module | Approach | References |
 |---|---|---|---|
