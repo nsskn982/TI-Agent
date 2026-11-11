@@ -105,7 +105,8 @@ ti-agent/
 ├── portfolio/              # M7: classical.py, qaoa.py, qkernel.py
 ├── orchestration/          # M8: weekly_run.py, n8n/
 ├── evaluation/             # M10
-├── app/                    # M9: Flutter project
+├── web/                    # M9: Django website (dashboard/, tiweb/)
+├── app/                    # M9: Flutter project (planned)
 ├── tests/
 ├── .env.example
 └── README.md
@@ -214,6 +215,28 @@ Never commit `.env`.
 | P3 Agent | 5–6 | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON |
 | P4 App | 7–9 | Flutter app + web, push | Invite-only testers for 2 weeks |
 | P5 Quantum + eval | 10–12 | QAOA, quantum kernel, scoring, n8n | Quantum vs classical benchmark report |
+
+## Website (Django)
+
+An invite-only research dashboard in [web/](web/). It reads from Supabase server-side (the service key
+never reaches the browser), and its own SQLite database holds only the logins.
+
+```powershell
+python web/manage.py migrate                  # once: creates web/db.sqlite3 for users and sessions
+python web/manage.py invite alice --admin     # prints a one-time password; there is no public sign-up
+python web/manage.py runserver                # http://127.0.0.1:8000  (needs DJANGO_DEBUG=true in .env)
+```
+
+| Page | Shows |
+|---|---|
+| `/` | This week's suggestions per ticker: stance, confidence, thesis, risks, links to the cited passages |
+| `/t/<ticker>/` | 12-month price chart against the benchmark, the computed features the agent saw, suggestion history |
+| `/c/<chunk_id>/` | The exact passage a suggestion cites, with a link to the original SEC filing or article |
+| `/status/` | Roadmap gates, agent runs, ingestion and processing runs |
+
+For a deployment, set `DJANGO_DEBUG=false`, a real `DJANGO_SECRET_KEY` and `DJANGO_ALLOWED_HOSTS`, and serve
+it over HTTPS. The Flutter app (planned) will read the same Supabase tables directly, using the anon key and
+Supabase Auth, under the policies in `db/rls.sql`.
 
 ## Quant + retrieval API (M4, M5)
 

@@ -1,0 +1,10 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ ref }}{% endblock %}
+{% block content %}
+<p class="muted" style="margin:0 0 8px"><a href="javascript:history.back()">← Back</a></p>
+<h1>{{ chunk.title|default:ref }}</h1>
+<p class="sub">{{ chunk.ticker }} · {{ chunk.doc_type|default:chunk.source }} · published {{ chunk.published_at|slice:":10" }} · <code>{{ ref }}</code>
+  {% if chunk.url %} · <a href="{{ chunk.url }}" rel="noopener noreferrer" target="_blank">Original source ↗</a>{% endif %}</p>
+<article class="card" style="white-space:pre-wrap;max-width:75ch">{{ chunk.content }}</article>
+<p class="muted" style="font-size:13px;margin-top:12px">This is the exact passage the agent was shown and cited. The agent only sees text published before its as-of date.</p>
+{% endblock %}

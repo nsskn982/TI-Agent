@@ -1,0 +1,33 @@
+{% extends "dashboard/base.html" %}{% load ti %}
+{% block title %}Suggestions{% endblock %}
+{% block content %}
+<h1>This week's suggestions</h1>
+{% if run %}
+<p class="sub">As of {{ run.as_of }} · run #{{ run.id }}
+  <span class="badge status-{{ run.status }}"><span class="dot" aria-hidden="true"></span>{{ run.status }}</span>
+  · model {{ run.model|default:"–" }} · stance is relative to the benchmark</p>
+{% else %}
+<p class="sub">No completed agent run yet.</p>
+{% endif %}
+
+{% if cards %}
+<div class="grid">
+  {% for c in cards %}
+  <article class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <h2 style="margin:0"><a href="{% url 'ticker' c.ticker %}">{{ c.ticker }}</a></h2>
+      <a class="muted" href="{% url 'ticker' c.ticker %}" style="font-size:13px">Details →</a>
+    </div>
+    {% if c.medium %}{% include "dashboard/_suggestion.html" with s=c.medium %}{% endif %}
+    {% if c.long %}{% include "dashboard/_suggestion.html" with s=c.long %}{% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <p><strong>Nothing to show yet.</strong></p>
+  <p>Run <code>python -m orchestration.weekly_run</code> on the laptop; suggestions appear here once a run finishes.</p>
+  <p><a href="{% url 'status' %}">See pipeline status</a></p>
+</div>
+{% endif %}
+{% endblock %}

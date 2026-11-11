@@ -1,0 +1,38 @@
+{% extends "dashboard/base.html" %}{% load ti %}
+{% block title %}Pipeline status{% endblock %}
+{% block content %}
+<h1>Pipeline status</h1>
+<p class="sub">Roadmap gates and recent runs.</p>
+
+<dl class="kv">
+  <div><dt>Phase 1 gate · clean ingestion days</dt><dd>{{ p1_streak }} / {{ p1_target }}</dd></div>
+  <div><dt>Phase 2 gate · retrieval</dt><dd>Passed</dd></div>
+  <div><dt>Phase 3 gate · clean weekly runs</dt><dd>{{ p3_weeks }} / {{ p3_target }}</dd></div>
+</dl>
+
+<h2>Agent runs</h2>
+{% if agent %}
+<div class="scroll"><table class="data">
+  <thead><tr><th>#</th><th>As of</th><th>Status</th><th>Model</th><th>Started</th><th>Notes</th></tr></thead>
+  <tbody>{% for r in agent %}
+  <tr><td class="n">{{ r.id }}</td><td>{{ r.as_of }}</td>
+    <td><span class="badge status-{{ r.status }}"><span class="dot" aria-hidden="true"></span>{{ r.status }}</span></td>
+    <td>{{ r.model|default:"–" }}</td><td>{{ r.started_at|slice:":16"|cut:"T" }}</td>
+    <td class="muted" style="max-width:420px">{{ r.error|default:""|truncatechars:180 }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<div class="card empty">No agent runs yet.</div>{% endif %}
+
+<h2>Ingestion and processing runs</h2>
+{% if ingestion %}
+<div class="scroll"><table class="data">
+  <thead><tr><th>Started (UTC)</th><th>Job</th><th>Status</th><th>Counts</th><th class="n">Errors</th></tr></thead>
+  <tbody>{% for r in ingestion %}
+  <tr><td>{{ r.started_at|slice:":16" }}</td><td>{{ r.job }}</td>
+    <td><span class="badge status-{{ r.status }}"><span class="dot" aria-hidden="true"></span>{{ r.status }}</span></td>
+    <td class="muted">{% for k, v in r.counts.items %}{{ k }} {{ v }}{% if not forloop.last %} · {% endif %}{% endfor %}</td>
+    <td class="n">{{ r.n_errors }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<div class="card empty">No ingestion runs yet.</div>{% endif %}
+{% endblock %}

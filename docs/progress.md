@@ -9,9 +9,9 @@
 |---|---|---|---|---|---|
 | P1 Foundations | Done | 20 pass | Yes, `7b7c4b0`, pushed | 7 days of data without errors | **Day 0.** Supabase set up and 2-year backfill loaded with 0 errors; the first scheduled daily run is 22:30 UTC on 2026-11-11 |
 | P2 Knowledge | Done | 22 pass | Yes, `b153cf5` on branch `phase-2-knowledge` (not pushed) | Relevant chunks on 10 test queries | **Passed 2026-11-11:** 10/10 automatic checks; all 10 on-topic by manual review with rerank |
-| P3 Agent | Done; works with the real model on real data (smoke test) | 27 pass | No | 4 weekly runs of valid, cited JSON | **Blocked.** Needs Ollama + P1/P2 data |
+| P3 Agent | Done; works with the real model on real data | 28 pass | Yes, branch `phase-2-knowledge` | 4 weekly runs of valid, cited JSON | **1 / 4.** Run #2 (2026-11-11) was `ok` for all 5 tickers |
 
-All of the code for the three phases is written and tested offline (69 tests, no network or keys needed).
+All of the code for the three phases is written and tested offline (83 tests, no network or keys needed).
 Phase 2 has passed its gate. Phase 1 needs 7 clean daily runs (earliest 2026-11-19), and Phase 3 needs
 4 weekly runs.
 
@@ -125,6 +125,44 @@ and the queries are about filings, so this is expected; the agent searches news 
 | Quarterly EPS is derived by subtracting year-to-date figures | Slightly off when the share count changes during the year | Rebuild EPS from net income and diluted shares |
 | FRED values have no release timestamp | The fixed release delays we use are conservative estimates | Use ALFRED's historical vintages |
 | News-sentiment features only cover news ingested since Phase 1 | Sentiment history starts at the backfill window | None needed; it fills in over time |
+
+## First real weekly runs (2026-11-11)
+
+| Run | Result | Why |
+|---|---|---|
+| #1 | `error`, no suggestions | Windows ran out of commit memory (27.0 of 27.3 GB used, with Brave holding about 3.7 GB), so Ollama couldn't load the model. Every request returned HTTP 500; the run failed cleanly and saved nothing invalid. |
+| #2 | **`ok`: 5/5 tickers, 10 suggestions, 4 min** | Brave closed. The run now loads the model *before* Python loads its own models, keeps it loaded for 30 minutes, and retries if loading fails for lack of memory. |
+
+Run #2: 3–6 model turns per ticker; 4 rejected saves (all AAPL, all figures not found in any tool output),
+each corrected by the model. Final stances (1–3m / 6–24m): AAPL bullish / neutral, AMZN neutral / neutral,
+GOOGL neutral / bullish, MSFT bullish / bullish, NVDA neutral / bullish; confidence 0.58–0.62.
+
+**Quality review.** Reading every thesis turned up two problems:
+
+- **Fixed: a loophole in the number check.** GOOGL's "net margin of 50%" passed because the checker read
+  numbers out of the raw JSON text, including field *names* like `sma_50`. It now reads only JSON values,
+  and ignores dates.
+- **Open: numbers under the wrong label.** Some figures are real tool values but described as the wrong
+  thing: AAPL "15% in recent month" is its revenue growth; NVDA "$127B FCF yield" is its FCF. The prompt
+  and the `get_features` description now include a field glossary. Code can't fully catch this; the M10
+  citation-faithfulness evaluation is where it gets measured.
+
+**Machine note.** The model reserves about 4.6 GB of Windows commit memory. Keep heavy apps closed during the
+weekly run, or enlarge the page file.
+
+## Website (Django)
+
+[web/](web/): an invite-only dashboard with Django's own logins (no public sign-up, `manage.py invite`).
+It reads Supabase server-side only. Pages: suggestions, ticker detail (price chart against SPY, features,
+history), citation viewer, pipeline status. 12 tests check:
+- every page requires a login
+- text from the LLM is escaped
+- missing citations are shown, not linked
+- `javascript:` URLs are never turned into links
+- the gate counters and the `invite` command
+
+Checked against the live data: every page returns 200, with 5 ticker cards, 36 citation links and
+252-day charts. Signed-out requests are redirected to the login page, and the security headers are set.
 
 ## Phase 3: Agent (M6 agent, M8 weekly run, M9 Telegram)
 

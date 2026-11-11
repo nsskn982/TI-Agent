@@ -7,3 +7,4 @@ __pycache__/
 .cache/
 agent/Modelfile.generated
 logs/
+web/db.sqlite3
