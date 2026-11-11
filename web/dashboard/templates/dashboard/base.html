@@ -79,6 +79,10 @@ h2 { font-size: 17px; margin: 32px 0 12px; }
 .conf { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 13px; }
 .horizon { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .horizon:first-of-type { margin-top: 8px; padding-top: 0; border-top: 0; }
+.chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 650;
+  letter-spacing: .02em; text-transform: none; vertical-align: 1px; border: 1px solid var(--border); }
+.chip-new { background: var(--accent); color: #fff; border-color: transparent; }
+.chip-changed { background: var(--surface-2); color: var(--ink); }
 .hlabel { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 table.data { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--surface); }
 table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
@@ -91,12 +95,27 @@ dl.kv div { background: var(--surface); border: 1px solid var(--border); border-
 dl.kv dt { font-size: 12px; color: var(--muted); }
 dl.kv dd { margin: 2px 0 0; font-size: 18px; font-variant-numeric: tabular-nums; }
 footer { color: var(--muted); font-size: 12px; padding: 24px 0; border-top: 1px solid var(--border); }
+footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.icon { width: 18px; height: 18px; display: block; }
+.social { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); padding: 6px; border-radius: 8px; }
+.social:hover { color: var(--ink); background: var(--surface-2); text-decoration: none; }
+.socials { display: flex; gap: 4px; }
+/* Contact tab: a <details> dropdown, works without JS */
+details.contact { position: relative; }
+details.contact > summary { list-style: none; cursor: pointer; color: var(--ink-2); padding: 6px 10px; border-radius: 6px; user-select: none; }
+details.contact > summary::-webkit-details-marker { display: none; }
+details.contact > summary:hover, details.contact[open] > summary { background: var(--surface-2); color: var(--ink); }
+details.contact .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 200px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  display: grid; gap: 2px; }
+details.contact .menu .social { padding: 8px 10px; }
+details.contact .menu p { margin: 4px 10px 6px; font-size: 12px; color: var(--muted); }
 @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 21px; } }
 </style>
 {% block head %}{% endblock %}
 </head>
 <body>
-<header class="top">
+<header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="{% url 'home' %}">TI Agent</a>
     {% if user.is_authenticated %}
@@ -108,12 +127,27 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0; border-top: 1px 
       <span>{{ user.get_username }}</span>
       <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="linkbtn" type="submit">Sign out</button></form>
     </div>
+    {% else %}<span style="flex:1"></span>{% endif %}
+    {% if contact_links %}
+    <details class="contact">
+      <summary>Contact</summary>
+      <div class="menu" role="group" aria-label="Contact">
+        <p>Get in touch</p>
+        {% include "dashboard/_contact_links.html" with show_label=True %}
+      </div>
+    </details>
     {% endif %}
   </div>
 </header>
 <div class="disclaimer"><div class="wrap">Research output from a learning project, not financial advice. TI Agent never places trades. Private, invite-only.</div></div>
-<main><div class="wrap">{% block content %}{% endblock %}</div></main>
-<footer><div class="wrap">TI Agent · suggestions are generated weekly by a local LLM from cited filings and news; every number comes from code.</div></footer>
+<main>{% block main %}<div class="wrap">{% block content %}{% endblock %}</div>{% endblock %}</main>
+<footer><div class="wrap"><span>TI Agent · suggestions are generated weekly by a local LLM from cited filings and news; every number comes from code.</span>
+  {% if contact_links %}<span class="socials">{% include "dashboard/_contact_links.html" %}</span>{% endif %}</div></footer>
+<script>
+// Close the Contact dropdown on outside click or Escape.
+document.addEventListener("click", e => document.querySelectorAll("details.contact[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll("details.contact[open]").forEach(d => { d.open = false; d.querySelector("summary").focus(); }); });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

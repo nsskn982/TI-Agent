@@ -51,6 +51,10 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+# "Contact" links in the header and at the end of the scroll story. Empty = hidden.
+CONTACT_GITHUB_URL = env("CONTACT_GITHUB_URL", "https://github.com/nsskn982") or ""
+CONTACT_LINKEDIN_URL = env("CONTACT_LINKEDIN_URL", "") or ""
+
 ROOT_URLCONF = "tiweb.urls"
 WSGI_APPLICATION = "tiweb.wsgi.application"
 
@@ -62,6 +66,7 @@ TEMPLATES = [{
         "django.template.context_processors.request",
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
+        "dashboard.context.contact",
     ]},
 }]
 

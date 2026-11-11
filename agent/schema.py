@@ -9,6 +9,14 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 CITATION = re.compile(r"^chunk_\d+$")
+# Qwen sometimes drifts into Chinese mid-sentence ("AI adoption不及预期"). CJK, kana, hangul.
+NON_ENGLISH = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯＀-￯]")
+
+
+def _english(text: str, field: str) -> str:
+    if NON_ENGLISH.search(text):
+        raise ValueError(f"{field} must be written in English only (found non-English characters)")
+    return text
 
 
 class Suggestion(BaseModel):
@@ -23,10 +31,15 @@ class Suggestion(BaseModel):
     confidence: float = Field(ge=0, le=1)
     as_of: date
 
+    @field_validator("thesis")
+    @classmethod
+    def _thesis(cls, v: str) -> str:
+        return _english(v, "thesis")
+
     @field_validator("risks")
     @classmethod
     def _risks(cls, v: list[str]) -> list[str]:
-        v = [r.strip() for r in v if r and r.strip()]
+        v = [_english(r.strip(), "each risk") for r in v if r and r.strip()]
         if not v:
             raise ValueError("at least one non-empty risk is required")
         if any(len(r) > 300 for r in v):

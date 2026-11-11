@@ -360,3 +360,16 @@ def test_field_names_and_dates_are_not_number_sources():
     assert unsupported_numbers("Up 12.0% over a year.", src) == ["12.0%"]  # "12" only in "ret_12m"
     assert unsupported_numbers("Net margin of 32%; up 28% in a year.", src) == []
     assert unsupported_numbers("Moved 11.0%.", src) == ["11.0%"]          # "11" only in the date
+
+
+def test_non_english_text_is_rejected_so_the_model_rewrites_it():
+    import pytest as _pt
+    from pydantic import ValidationError
+    from agent.schema import Suggestion
+    base = dict(ticker="AAPL", horizon="long", stance="neutral", sources=["chunk_1"], confidence=0.55,
+                as_of="2026-11-11", thesis="Fundamentals remain solid with steady services growth and buybacks.")
+    Suggestion(**base, risks=["AI adoption slower than expected"])
+    with _pt.raises(ValidationError, match="English"):
+        Suggestion(**base, risks=["AI adoption不及预期"])
+    with _pt.raises(ValidationError, match="English"):
+        Suggestion(**{**base, "thesis": base["thesis"] + " 增长强劲。"}, risks=["Valuation"])

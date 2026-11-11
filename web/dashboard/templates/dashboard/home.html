@@ -1,33 +1,307 @@
 {% extends "dashboard/base.html" %}{% load ti %}
 {% block title %}Suggestions{% endblock %}
-{% block content %}
-<h1>This week's suggestions</h1>
-{% if run %}
-<p class="sub">As of {{ run.as_of }} · run #{{ run.id }}
-  <span class="badge status-{{ run.status }}"><span class="dot" aria-hidden="true"></span>{{ run.status }}</span>
-  · model {{ run.model|default:"–" }} · stance is relative to the benchmark</p>
-{% else %}
-<p class="sub">No completed agent run yet.</p>
-{% endif %}
+{% block head %}
+<style>
+/*
+  Scroll story. Three modes, chosen by script on <html>:
+  - no class (no JS, or prefers-reduced-motion): everything visible, plain document flow.
+  - .anim: elements marked .r fade up as they enter the viewport.
+  - .anim.motion (wide + tall screens): "tall" scenes pin their stage while you scroll and
+    the script scrubs CSS variables (--t, --a, --m, --l, --o) from 0 to 1, like a timeline.
+    A scene whose content can't fit one screen gets .static and scrolls normally.
+*/
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+.story { position: relative; overflow-x: clip; }
+.scene { position: relative; --t: 0; --a: 1; --m: 1; --l: 1; --o: 0; }
+.stage { position: relative; padding: 72px 0; }
+.stage > .wrap { position: relative; z-index: 1; width: 100%; }
+html.motion .scene.tall { height: var(--len, 240vh); }
+html.motion .scene.tall:not(.static) > .stage { position: sticky; top: 0; height: 100vh; padding: 0;
+  display: flex; align-items: center; overflow: hidden; }
 
-{% if cards %}
-<div class="grid">
-  {% for c in cards %}
-  <article class="card">
-    <div style="display:flex;justify-content:space-between;align-items:baseline">
-      <h2 style="margin:0"><a href="{% url 'ticker' c.ticker %}">{{ c.ticker }}</a></h2>
-      <a class="muted" href="{% url 'ticker' c.ticker %}" style="font-size:13px">Details →</a>
+/* progress bar + chapter rail */
+.progress { position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 60; pointer-events: none; }
+.progress span { display: block; height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+html:not(.anim) .progress { display: none; }
+.rail { display: none; }
+@media (min-width: 1240px) {
+  html.anim .rail { display: flex; flex-direction: column; gap: 12px; position: fixed; right: 20px; top: 50%;
+    transform: translateY(-50%); z-index: 40; }
+}
+.rail a { display: flex; align-items: center; justify-content: flex-end; gap: 10px; font-size: 12px; color: var(--muted); }
+.rail a:hover { text-decoration: none; color: var(--ink); }
+.rail a span { opacity: 0; transition: opacity .2s; }
+.rail a:hover span, .rail a.on span { opacity: 1; }
+.rail a i { width: 8px; height: 8px; border-radius: 50%; background: var(--axis); transition: transform .2s, background .2s; }
+.rail a.on { color: var(--ink); }
+.rail a.on i { background: var(--ink); transform: scale(1.5); }
+
+/* fade-up reveal */
+html.anim .r { opacity: 0; transform: translateY(28px);
+  transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1);
+  transition-delay: calc(var(--i, 0) * 70ms); }
+html.anim .r.in { opacity: 1; transform: none; }
+
+/* ---------------------------------------------------------------- hero */
+.hero { --len: 160vh; }
+.hero > .stage { min-height: calc(100vh - 96px); display: flex; align-items: center; overflow: hidden; }
+.orbs { position: absolute; inset: -15%; pointer-events: none; z-index: 0; }
+.orbs i { position: absolute; border-radius: 50%; filter: blur(70px); }
+.orbs i:nth-child(1) { width: 44vmax; height: 44vmax; left: 48%; top: 0; background: var(--series-1); opacity: .26; }
+.orbs i:nth-child(2) { width: 30vmax; height: 30vmax; left: 70%; top: 42%; background: var(--series-2); opacity: .18; }
+.orbs i:nth-child(3) { width: 22vmax; height: 22vmax; left: 30%; top: 55%; background: var(--series-1); opacity: .12; }
+@media (prefers-reduced-motion: no-preference) {
+  .orbs i:nth-child(1) { animation: drift 19s ease-in-out infinite alternate; }
+  .orbs i:nth-child(2) { animation: drift 23s ease-in-out -6s infinite alternate-reverse; }
+  .orbs i:nth-child(3) { animation: drift 27s ease-in-out -3s infinite alternate; }
+}
+@keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(-6vmax, 4vmax) scale(1.12); } }
+.eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin: 0 0 14px; }
+.display { font-size: clamp(42px, 8vw, 104px); line-height: .96; letter-spacing: -.04em; font-weight: 760; margin: 0 0 22px; max-width: 11ch; }
+.lede { font-size: clamp(17px, 2vw, 21px); color: var(--ink-2); max-width: 44ch; margin: 0 0 36px; }
+.stats { display: flex; gap: 40px; flex-wrap: wrap; margin: 0 0 44px; padding: 0; list-style: none; }
+.stats b { display: block; font-size: clamp(32px, 4vw, 44px); font-weight: 720; letter-spacing: -.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums; }
+.stats span { font-size: 13px; color: var(--muted); }
+.cue { display: inline-flex; gap: 10px; align-items: center; color: var(--ink-2); font-size: 14px; }
+.cue:hover { text-decoration: none; color: var(--ink); }
+.mouse { width: 22px; height: 34px; border: 2px solid var(--axis); border-radius: 12px; position: relative; }
+.mouse::after { content: ""; position: absolute; left: 50%; top: 6px; width: 4px; height: 7px; margin-left: -2px;
+  border-radius: 2px; background: var(--ink-2); }
+@media (prefers-reduced-motion: no-preference) { .mouse::after { animation: wheel 1.7s ease-in-out infinite; } }
+@keyframes wheel { 0% { opacity: 0; transform: translateY(-2px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(11px); } }
+html.motion .hero:not(.static) .hero-inner { opacity: calc(1 - var(--t) * 1.3);
+  transform: translateY(calc(var(--t) * -90px)) scale(calc(1 - var(--t) * .08)); transform-origin: left center; }
+html.motion .hero:not(.static) .orbs { transform: translateY(calc(var(--t) * 140px)) scale(calc(1 + var(--t) * .35)); }
+
+/* ---------------------------------------------------------------- overview */
+.section-title { font-size: clamp(28px, 4.2vw, 46px); letter-spacing: -.025em; line-height: 1.05; margin: 0 0 10px; }
+.section-sub { color: var(--ink-2); margin: 0; max-width: 56ch; }
+.overview > .stage { padding: 112px 0 96px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 32px; }
+.tile { display: block; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; transition: transform .25s, border-color .25s, box-shadow .25s; }
+html.anim .tile.r.in:hover, .tile:hover { transform: translateY(-4px); border-color: var(--axis); text-decoration: none;
+  box-shadow: 0 10px 28px rgba(0,0,0,.08); }
+.tile .tsym { font-size: 22px; font-weight: 720; letter-spacing: -.01em; }
+.tile .trow { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-top: 8px; }
+
+/* ---------------------------------------------------------------- ticker scenes */
+.ticker-scene { --tone: var(--axis); }
+.ticker-scene.lead-bullish { --tone: var(--bull); }
+.ticker-scene.lead-bearish { --tone: var(--bear); }
+/* wider than the scene so the drift never exposes an edge; the stage/story clips it */
+.glow { position: absolute; inset: -10% -30%; pointer-events: none; z-index: 0;
+  background: radial-gradient(36% 50% at 34% 34%, var(--tone) 0%, transparent 70%); opacity: .13; }
+.scene-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+.scene-no { font-size: 12px; color: var(--muted); letter-spacing: .14em; font-variant-numeric: tabular-nums; margin: 0; }
+.sym-big { font-size: clamp(60px, 11vw, 148px); font-weight: 800; letter-spacing: -.05em; line-height: .88; margin: 6px 0 0; }
+.sym-big a { color: inherit; }
+.sym-big a:hover { text-decoration: none; }
+.scene-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.views { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.view { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.06); }
+.view .horizon { margin: 0; padding: 0; border: 0; }
+.view .thesis { font-size: 16px; line-height: 1.55; }
+@media (max-width: 760px) { .views { grid-template-columns: 1fr; } .scene-meta { align-items: flex-start; } }
+/* scrubbed choreography (specificity beats the .r reveal rules) */
+html.motion .ticker-scene.tall:not(.static) .r { transition: none; }
+html.motion .ticker-scene.tall:not(.static) .sym-big { opacity: var(--a);
+  transform: translateY(calc((1 - var(--a)) * 70px)) scale(calc(1.3 - var(--a) * .3)); transform-origin: left bottom; }
+html.motion .ticker-scene.tall:not(.static) .scene-no,
+html.motion .ticker-scene.tall:not(.static) .scene-meta { opacity: var(--a); transform: none; }
+html.motion .ticker-scene.tall:not(.static) .v1 { opacity: var(--m); transform: translateX(calc((1 - var(--m)) * -90px)); }
+html.motion .ticker-scene.tall:not(.static) .v2 { opacity: var(--l); transform: translateX(calc((1 - var(--l)) * 90px)); }
+html.motion .ticker-scene.tall:not(.static) > .stage > .wrap { opacity: calc(1 - var(--o) * .75);
+  transform: scale(calc(1 - var(--o) * .06)); }
+html.motion .ticker-scene.tall:not(.static) .glow { opacity: calc(var(--a) * .26 - var(--o) * .2);
+  transform: translateX(calc(var(--t) * 8%)); }
+
+/* ---------------------------------------------------------------- outro */
+.outro > .stage { padding: 120px 0 96px; text-align: center; }
+.outro .section-sub { margin: 0 auto; }
+.contact-big { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin: 32px 0 28px; }
+.contact-big .social { padding: 14px 20px; gap: 12px; font-size: 16px; font-weight: 600; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; transition: transform .25s, border-color .25s; }
+.contact-big .social:hover { transform: translateY(-3px); border-color: var(--axis); background: var(--surface); }
+.contact-big .icon { width: 26px; height: 26px; }
+.outro-links { display: flex; justify-content: center; gap: 20px; font-size: 14px; }
+.empty-hero { max-width: 56ch; }
+</style>
+{% endblock %}
+
+{% block main %}
+<div class="story">
+  <div class="progress" aria-hidden="true"><span></span></div>
+
+  <nav class="rail" aria-label="Jump to section">
+    <a href="#intro"><span>Intro</span><i></i></a>
+    {% if cards %}<a href="#overview"><span>At a glance</span><i></i></a>{% endif %}
+    {% for c in cards %}<a href="#t-{{ c.ticker }}"><span>{{ c.ticker }}</span><i></i></a>{% endfor %}
+    <a href="#contact"><span>Contact</span><i></i></a>
+  </nav>
+
+  <section class="scene hero tall" id="intro" aria-labelledby="hero-title">
+    <div class="stage">
+      <div class="orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="wrap hero-inner">
+        {% if run %}
+        <p class="eyebrow">Weekly research · as of {{ run.as_of }} · run #{{ run.id }}
+          <span class="badge status-{{ run.status }}" style="margin-left:6px"><span class="dot" aria-hidden="true"></span>{{ run.status }}</span></p>
+        <h1 class="display" id="hero-title">This week's suggestions</h1>
+        <p class="lede">Two horizons for every ticker, judged against the benchmark. Every claim is cited and every number comes from code.</p>
+        <ul class="stats">
+          <li><b data-count="{{ stats.tickers }}">{{ stats.tickers }}</b><span>tickers</span></li>
+          <li><b data-count="{{ stats.views }}">{{ stats.views }}</b><span>views</span></li>
+          <li><b data-count="{{ stats.bullish }}">{{ stats.bullish }}</b><span>bullish</span></li>
+          <li><b data-count="{{ stats.sources }}">{{ stats.sources }}</b><span>cited passages</span></li>
+          {% if stats.changed %}<li><b data-count="{{ stats.changed }}">{{ stats.changed }}</b><span>new or changed</span></li>{% endif %}
+        </ul>
+        <a class="cue" href="#overview"><span class="mouse" aria-hidden="true"></span>Scroll to explore</a>
+        {% else %}
+        <p class="eyebrow">Weekly research</p>
+        <h1 class="display" id="hero-title">This week's suggestions</h1>
+        <div class="empty-hero">
+          <p class="lede"><strong>Nothing to show yet.</strong> Run <code>python -m orchestration.weekly_run</code> on the laptop; suggestions appear here once a run finishes.</p>
+          <p><a href="{% url 'status' %}">See pipeline status →</a></p>
+        </div>
+        {% endif %}
+      </div>
     </div>
-    {% if c.medium %}{% include "dashboard/_suggestion.html" with s=c.medium %}{% endif %}
-    {% if c.long %}{% include "dashboard/_suggestion.html" with s=c.long %}{% endif %}
-  </article>
+  </section>
+
+  {% if cards %}
+  <section class="scene overview" id="overview" aria-labelledby="ov-title">
+    <div class="stage"><div class="wrap">
+      <h2 class="section-title r" id="ov-title">At a glance</h2>
+      <p class="section-sub r" style="--i:1">Stance relative to the benchmark. Keep scrolling for each thesis and the passages behind it.</p>
+      <div class="tiles">
+        {% for c in cards %}
+        <a class="tile r" style="--i:{{ forloop.counter|add:1 }}" href="#t-{{ c.ticker }}">
+          <div class="tsym">{{ c.ticker }}</div>
+          {% if c.medium %}<div class="trow"><span>1–3 months</span><span class="badge stance-{{ c.medium.stance }}"><span class="dot" aria-hidden="true"></span>{{ c.medium.stance|stance_mark }} {{ c.medium.stance|capfirst }}</span></div>{% endif %}
+          {% if c.long %}<div class="trow"><span>6–24 months</span><span class="badge stance-{{ c.long.stance }}"><span class="dot" aria-hidden="true"></span>{{ c.long.stance|stance_mark }} {{ c.long.stance|capfirst }}</span></div>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div></div>
+  </section>
+
+  {% for c in cards %}
+  <section class="scene ticker-scene tall lead-{{ c.medium.stance|default:'neutral' }}" id="t-{{ c.ticker }}" aria-labelledby="h-{{ c.ticker }}">
+    <div class="stage">
+      <div class="glow" aria-hidden="true"></div>
+      <div class="wrap">
+        <div class="scene-head">
+          <div>
+            <p class="scene-no r">{{ forloop.counter|stringformat:"02d" }} / {{ cards|length|stringformat:"02d" }}</p>
+            <h2 class="sym-big r" id="h-{{ c.ticker }}"><a href="{% url 'ticker' c.ticker %}">{{ c.ticker }}</a></h2>
+          </div>
+          <div class="scene-meta r" style="--i:1">
+            <a href="{% url 'ticker' c.ticker %}">Chart, features and history →</a>
+          </div>
+        </div>
+        <div class="views">
+          <article class="view v1 r" style="--i:2">{% if c.medium %}{% include "dashboard/_suggestion.html" with s=c.medium %}{% else %}<p class="muted">No 1–3 month view this week.</p>{% endif %}</article>
+          <article class="view v2 r" style="--i:3">{% if c.long %}{% include "dashboard/_suggestion.html" with s=c.long %}{% else %}<p class="muted">No 6–24 month view this week.</p>{% endif %}</article>
+        </div>
+      </div>
+    </div>
+  </section>
   {% endfor %}
+  {% endif %}
+
+  <section class="scene outro" id="contact" aria-labelledby="contact-title">
+    <div class="stage"><div class="wrap">
+      <p class="eyebrow r">Contact</p>
+      <h2 class="section-title r" style="--i:1" id="contact-title">Get in touch</h2>
+      <p class="section-sub r" style="--i:2">Questions about the project, the method or the code? Reach out.</p>
+      {% if contact_links %}<div class="contact-big r" style="--i:3">{% include "dashboard/_contact_links.html" with show_label=True %}</div>{% endif %}
+      <div class="outro-links r" style="--i:4"><a href="{% url 'status' %}">Pipeline status</a><a href="#intro">Back to top ↑</a></div>
+    </div></div>
+  </section>
 </div>
-{% else %}
-<div class="card empty">
-  <p><strong>Nothing to show yet.</strong></p>
-  <p>Run <code>python -m orchestration.weekly_run</code> on the laptop; suggestions appear here once a run finishes.</p>
-  <p><a href="{% url 'status' %}">See pipeline status</a></p>
-</div>
-{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const root = document.documentElement;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;  // static page, all visible
+  root.classList.add("anim");
+
+  const seg = (t, a, b) => Math.min(1, Math.max(0, (t - a) / (b - a)));
+  const tall = [...document.querySelectorAll(".scene.tall")];
+  const bar = document.querySelector(".progress span");
+  const rail = [...document.querySelectorAll(".rail a")];
+  const railTargets = rail.map(a => document.getElementById(a.hash.slice(1)));
+
+  // Fade-up reveal for everything marked .r.
+  const io = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }), { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+  document.querySelectorAll(".r").forEach(el => io.observe(el));
+
+  function layout() {
+    const motion = innerWidth >= 800 && innerHeight >= 600;
+    root.classList.toggle("motion", motion);
+    // A scene whose content can't fit one screen scrolls normally instead of pinning.
+    tall.forEach(s => {
+      s.classList.remove("static");
+      if (motion && s.querySelector(".stage > .wrap").scrollHeight > innerHeight - 48) s.classList.add("static");
+    });
+    frame();
+  }
+
+  function frame() {
+    const vh = innerHeight, max = root.scrollHeight - vh;
+    bar.style.transform = `scaleX(${max > 0 ? Math.min(1, scrollY / max) : 0})`;
+
+    if (root.classList.contains("motion")) tall.forEach(s => {
+      if (s.classList.contains("static")) return;
+      const r = s.getBoundingClientRect();
+      if (r.bottom < -vh || r.top > 2 * vh) return;          // off screen: skip work
+      const t = seg(-r.top, 0, r.height - vh);              // 0..1 while the stage is pinned
+      const enter = seg(vh - r.top, vh * 0.1, vh);          // 0..1 as the scene slides in
+      const st = s.style;
+      st.setProperty("--t", t.toFixed(4));
+      st.setProperty("--a", seg(enter, 0.3, 1).toFixed(4)); // ticker symbol
+      st.setProperty("--m", seg(t, 0, 0.3).toFixed(4));     // 1–3 month view
+      st.setProperty("--l", seg(t, 0.2, 0.5).toFixed(4));   // 6–24 month view
+      st.setProperty("--o", seg(t, 0.86, 1).toFixed(4));    // exit
+    });
+
+    let on = 0;
+    railTargets.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= vh * 0.5) on = i; });
+    rail.forEach((a, i) => a.classList.toggle("on", i === on));
+  }
+
+  let queued = false;
+  addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; frame(); }); } }, { passive: true });
+  addEventListener("resize", layout);
+  layout();
+
+  // Keyboard users: tabbing into a pinned scene jumps to the point where both views are visible.
+  document.addEventListener("focusin", e => {
+    const s = e.target.closest(".ticker-scene.tall");
+    if (!s || !root.classList.contains("motion") || s.classList.contains("static")) return;
+    const top = s.getBoundingClientRect().top + scrollY, target = top + (s.offsetHeight - innerHeight) * 0.6;
+    if (Math.abs(scrollY - target) > 4) window.scrollTo({ top: target, behavior: "instant" });
+  });
+
+  // Count-up for the hero numbers.
+  document.querySelectorAll("[data-count]").forEach(el => {
+    const n = parseInt(el.dataset.count, 10) || 0, t0 = performance.now(), dur = 1100;
+    if (!n) return;
+    const step = now => {
+      const p = Math.min(1, (now - t0) / dur), eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(n * eased);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    el.textContent = "0";
+    requestAnimationFrame(step);
+  });
+})();
+</script>
 {% endblock %}

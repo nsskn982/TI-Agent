@@ -25,17 +25,36 @@ def _attach_citations(repo, suggestions: list[dict]) -> None:
                           for i in repo_mod.chunk_ids(s.get("sources"))]
 
 
+def _mark_changes(repo, run: dict, rows: list[dict]) -> None:
+    """Tag each suggestion against the previous good run: new, changed (from what) or unchanged."""
+    prev = next((r for r in repo.agent_runs() if r["id"] < run["id"] and r["status"] in ("ok", "partial")), None)
+    before = {(p["ticker"], p["horizon"]): p["stance"] for p in repo.suggestions_for_run(prev["id"])} if prev else {}
+    for s in rows:
+        old = before.get((s["ticker"], s["horizon"]))
+        s["change"] = "new" if old is None else ("unchanged" if old == s["stance"] else "changed")
+        s["previous_stance"] = old
+
+
 @login_required
 def home(request):
     repo = repo_mod.get_repo()
     run = repo.latest_good_run()
     rows = repo.suggestions_for_run(run["id"]) if run else []
     _attach_citations(repo, rows)
+    if run:
+        _mark_changes(repo, run, rows)
     by_ticker: dict[str, dict] = defaultdict(dict)
     for s in rows:
         by_ticker[s["ticker"]][s["horizon"]] = s
     cards = [{"ticker": t, "medium": h.get("medium"), "long": h.get("long")} for t, h in sorted(by_ticker.items())]
-    return render(request, "dashboard/home.html", {"run": run, "cards": cards, "nav": "home"})
+    stances = [s["stance"] for s in rows]
+    stats = {
+        "tickers": len(cards), "views": len(rows),
+        "bullish": stances.count("bullish"), "neutral": stances.count("neutral"), "bearish": stances.count("bearish"),
+        "sources": len({c["id"] for s in rows for c in s["citations"] if not c.get("missing")}),
+        "changed": sum(s.get("change") in ("new", "changed") for s in rows),
+    }
+    return render(request, "dashboard/home.html", {"run": run, "cards": cards, "stats": stats, "nav": "home"})
 
 
 @login_required

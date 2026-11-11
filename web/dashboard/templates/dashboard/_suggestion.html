@@ -1,6 +1,6 @@
 {% load ti %}<div class="horizon">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-    <span class="hlabel">{% if s.horizon == 'medium' %}1–3 months{% else %}6–24 months{% endif %}</span>
+    <span class="hlabel">{% if s.horizon == 'medium' %}1–3 months{% else %}6–24 months{% endif %}{% if s.change == 'new' %} <span class="chip chip-new">New</span>{% elif s.change == 'changed' %} <span class="chip chip-changed" title="Previous view: {{ s.previous_stance }}">Changed from {{ s.previous_stance }}</span>{% endif %}</span>
     <span>
       <span class="badge stance-{{ s.stance }}"><span class="dot" aria-hidden="true"></span>{{ s.stance|stance_mark }} {{ s.stance|capfirst }}</span>
       <span class="conf" title="Probability the stance is right">{{ s.confidence|pct_plain:0 }} confidence</span>

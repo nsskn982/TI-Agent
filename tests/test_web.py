@@ -141,3 +141,47 @@ def test_invite_command_creates_user(capsys, django_user_model):
     out = capsys.readouterr().out
     assert "Created bob" in out and "Password (shown once)" in out
     assert django_user_model.objects.get(username="bob").has_usable_password()
+
+
+@pytest.mark.django_db
+def test_contact_links_in_header_even_when_signed_out(client, settings):
+    settings.CONTACT_GITHUB_URL = "https://github.com/nsskn982"
+    settings.CONTACT_LINKEDIN_URL = "https://www.linkedin.com/in/example"
+    html = client.get(reverse("login")).content.decode()
+    assert '<details class="contact">' in html
+    assert 'href="https://github.com/nsskn982"' in html and 'href="https://www.linkedin.com/in/example"' in html
+    assert 'rel="noopener noreferrer me"' in html and 'aria-label="LinkedIn (opens in a new tab)"' in html
+
+
+@pytest.mark.django_db
+def test_unset_or_unsafe_contact_link_is_hidden(client, settings):
+    settings.CONTACT_GITHUB_URL = "javascript:alert(1)"
+    settings.CONTACT_LINKEDIN_URL = ""
+    html = client.get(reverse("login")).content.decode()
+    assert "javascript:" not in html and '<details class="contact">' not in html
+
+
+@pytest.mark.django_db
+def test_home_scroll_story_scenes_and_contact(user_client, fake, settings):
+    settings.CONTACT_LINKEDIN_URL = "https://www.linkedin.com/in/example"
+    resp = user_client.get(reverse("home"))
+    html = resp.content.decode()
+    assert 'id="intro"' in html and 'id="overview"' in html and 'id="contact"' in html
+    assert 'id="t-AAPL"' in html and 'id="t-MSFT"' in html and 'href="#t-AAPL"' in html
+    assert "lead-bearish" in html                                   # MSFT medium view is bearish
+    assert resp.context["stats"] == {"tickers": 2, "views": 3, "bullish": 1, "neutral": 1, "bearish": 1,
+                                     "sources": 1, "changed": 3}
+    assert html.count('class="chip chip-new"') == 3                             # no earlier good run: all new
+
+
+@pytest.mark.django_db
+def test_home_marks_changed_views_against_previous_run(user_client, fake):
+    prev = {**RUN, "id": 1, "status": "ok", "error": None}
+    fake.agent_runs = lambda limit=20: [RUN, prev]
+    current = fake.suggestions
+    fake.suggestions_for_run = lambda run_id: [dict(s) for s in current] if run_id == 2 else [
+        sug("AAPL", "medium", "bullish"), sug("AAPL", "long", "bullish")]
+    resp = user_client.get(reverse("home"))
+    changes = {(s["ticker"], s["horizon"]): s["change"] for c in resp.context["cards"] for s in (c["medium"], c["long"]) if s}
+    assert changes == {("AAPL", "medium"): "unchanged", ("AAPL", "long"): "changed", ("MSFT", "medium"): "new"}
+    assert "Changed from bullish" in resp.content.decode()

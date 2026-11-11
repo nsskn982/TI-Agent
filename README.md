@@ -229,10 +229,13 @@ python web/manage.py runserver                # http://127.0.0.1:8000  (needs DJ
 
 | Page | Shows |
 |---|---|
-| `/` | This week's suggestions per ticker: stance, confidence, thesis, risks, links to the cited passages |
+| `/` | A scroll story: an intro with this week's numbers, an at-a-glance grid, then one full-screen scene per ticker where its two views slide in as you scroll (marked **New** or **Changed from …** against the previous run), ending with a contact section |
 | `/t/<ticker>/` | 12-month price chart against the benchmark, the computed features the agent saw, suggestion history |
 | `/c/<chunk_id>/` | The exact passage a suggestion cites, with a link to the original SEC filing or article |
 | `/status/` | Roadmap gates, agent runs, ingestion and processing runs |
+
+The **Contact** tab in the header (and the closing scene) links to LinkedIn and GitHub. Set
+`CONTACT_LINKEDIN_URL` and `CONTACT_GITHUB_URL` in `.env`; an empty value hides that icon.
 
 For a deployment, set `DJANGO_DEBUG=false`, a real `DJANGO_SECRET_KEY` and `DJANGO_ALLOWED_HOSTS`, and serve
 it over HTTPS. The Flutter app (planned) will read the same Supabase tables directly, using the anon key and

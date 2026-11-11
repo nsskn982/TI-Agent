@@ -1,0 +1,1 @@
+{% for c in contact_links %}<a class="social social-{{ c.key }}" href="{{ c.url }}" target="_blank" rel="noopener noreferrer me" aria-label="{{ c.label }} (opens in a new tab)" title="{{ c.label }}">{% include "dashboard/_icon.html" with key=c.key %}{% if show_label %}<span>{{ c.label }}</span>{% endif %}</a>{% endfor %}
