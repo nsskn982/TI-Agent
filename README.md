@@ -1,6 +1,6 @@
 # TI Agent — Trading Intelligence
 
-An agentic, retrieval-augmented AI that produces **medium-term (1–3 months)** and **long-term (6–24 months)** trading suggestions for a watchlist, grounded in news, SEC filings, macro data and price history — built entirely on **free tools**, with a **quantum computing** research layer planned for portfolio optimization.
+An agentic, retrieval-augmented AI that screens the whole **S&P 500** every week and produces **medium-term (1–3 months)** and **long-term (6–24 months)** trading suggestions for the **top 20** picks, grounded in news, SEC filings, macro data and price history — built entirely on **free tools**, with a **quantum computing** research layer planned for portfolio optimization.
 
 > **Disclaimer:** TI Agent is a research and learning project. Its output is not financial advice. It never places trades. Use at your own risk.
 
@@ -12,6 +12,7 @@ An agentic, retrieval-augmented AI that produces **medium-term (1–3 months)** 
 |---|---|
 | P1 Foundations: daily ingestion and processing | Built. 2-year backfill loaded with 0 errors. Gate: 7 clean daily runs, earliest **2026-11-19** |
 | P2 Knowledge: quant engine, hybrid retrieval | Built. **Gate passed** (10/10 test queries relevant with rerank) |
+| S&P 500 screen: momentum among quality companies, top 20 | Built. Runs in GitHub Actions on Fridays; the daily ingest and the weekly agent then work on the picks |
 | P3 Agent: weekly LLM run | Built. **1 of 4** clean weekly runs done (5 tickers, 10 cited suggestions) |
 | App (Flutter: web, Android, iOS) | Code written. GitHub Actions will compile, test and publish the web version to GitHub Pages on the next push |
 | Django dashboard | Built. Local tool for the owner (pipeline status, computed features) |
@@ -21,18 +22,24 @@ An agentic, retrieval-augmented AI that produces **medium-term (1–3 months)** 
 
 ## What it does
 
-1. **Collects** news, filings, macro series and prices every weekday.
-2. **Indexes** text into a vector store, tagged by ticker, date and source.
-3. **Reasons** with a local LLM agent that calls tools to gather evidence for each ticker.
-4. **Suggests** a structured, cited view per ticker: stance, thesis, risks, confidence.
-5. **Optimizes** a portfolio from the suggestions, benchmarking quantum (QAOA) against classical solvers *(planned, P5)*.
-6. **Delivers** results through one Flutter app (web, Android, iOS) and Telegram.
-7. **Evaluates** every past suggestion against real returns and a benchmark *(planned, P5)*.
+1. **Screens** all ~503 S&P 500 stocks weekly: momentum (12-1 month, vs S&P 500) among profitable, cash-generating companies, and keeps the top 20.
+2. **Collects** news, filings, macro series and prices for the picks every weekday.
+3. **Indexes** text into a vector store, tagged by ticker, date and source.
+4. **Reasons** with a local LLM agent that calls tools to gather evidence for each ticker.
+5. **Suggests** a structured, cited view per ticker: stance, thesis, risks, confidence.
+6. **Optimizes** a portfolio from the suggestions, benchmarking quantum (QAOA) against classical solvers *(planned, P5)*.
+7. **Delivers** results through one Flutter app (web, Android, iOS) and Telegram.
+8. **Evaluates** every past suggestion against real returns and a benchmark *(planned, P5)*.
 
 ## Architecture
 
 ```
-GitHub Actions (cloud, weekdays 22:30 UTC)
+GitHub Actions (cloud, Fridays 23:30 UTC): S&P 500 screen
+  Wikipedia constituents · yfinance prices · SEC XBRL fundamentals (all ~503)
+  → momentum among quality companies → top 20 → Supabase "screens"
+  → backfill news + filings for new picks
+
+GitHub Actions (cloud, weekdays 22:30 UTC): picks only
   Finnhub · SEC EDGAR · FRED · yfinance
   → clean, chunk, embed (MiniLM), score news (FinBERT)
   → Supabase (Postgres + pgvector)
@@ -62,7 +69,7 @@ Supabase is the single hand-off point: every module reads from and writes to it,
 | M1 | Ingestion | Pull news, filings, XBRL fundamentals, prices, macro | GitHub Actions (daily) | Built |
 | M2 | Processing + embedding | Clean, chunk, tag, embed, sentiment | GitHub Actions (daily) | Built |
 | M3 | Knowledge store | Data, vectors, auth, row-level security | Supabase (cloud) | Built |
-| M4 | Quant engine | Indicators, ratios, sentiment aggregates | Laptop (FastAPI) | Built |
+| M4 | Quant engine | Indicators, ratios, sentiment aggregates; weekly S&P 500 screen | Laptop (FastAPI) + GitHub Actions (screen) | Built |
 | M5 | Retrieval | Hybrid search, date-filtered, rerank | Laptop | Built |
 | M6 | AI Finance Agent | Tool-calling LLM that writes suggestions | Laptop GPU (Ollama) | Built |
 | M7 | Portfolio + quantum | Classical vs QAOA allocation, quantum-kernel regime classifier | Laptop CPU (simulators) | Planned |
@@ -108,7 +115,9 @@ Every suggestion is validated JSON. `ticker` and `as_of` are set by code, never 
 ```
 TI-Agent/
 ├── .github/workflows/
-│   └── ingest.yml          # M1 + M2, weekdays
+│   ├── ingest.yml          # M1 + M2 for the picks, weekdays
+│   ├── screen.yml          # S&P 500 screen, Fridays
+│   └── app.yml             # Flutter: test, web (GitHub Pages), APK
 ├── common/                 # config, HTTP, Supabase store, logging
 ├── ingestion/              # M1
 ├── processing/             # M2
@@ -116,7 +125,7 @@ TI-Agent/
 ├── quant/                  # M4: features + FastAPI app
 ├── retrieval/              # M5: hybrid search + evaluation queries
 ├── agent/                  # M6: tools, agent loop, schema checks, prompts/
-├── orchestration/          # M8: weekly_run.py
+├── orchestration/          # M8: weekly_run.py, screen_run.py
 ├── delivery/               # M9: Telegram
 ├── web/                    # M9: Django website (dashboard/, tiweb/)
 ├── app/                    # M9: Flutter app
@@ -157,7 +166,9 @@ copy .env.example .env          # fill in SUPABASE_URL, SUPABASE_SERVICE_KEY, FI
 # 4. Build the local model
 .\scripts\create_model.ps1      # pulls qwen3.5:4b, builds the text-only trading-analyst (fits 6 GB)
 
-# 5. Load data (watchlist.txt sets the tickers; --tickers overrides it)
+# 5. Load data. Before the first S&P 500 screen, watchlist.txt sets the tickers; afterwards the
+#    latest top-20 picks do (--tickers always overrides).
+python -m orchestration.screen_run    # S&P 500 screen: ~45 min the first time (also runs Fridays in Actions)
 python -m ingestion.run --days 730    # first run: ~2-year backfill
 python -m processing.run              # chunk, embed, score news
 python -m pytest -q                   # offline tests, no keys needed
@@ -209,6 +220,7 @@ Set in `.env` (never commit it). The app's settings go in `app/config.json` inst
 | `FINNHUB_API_KEY`, `FRED_API_KEY`, `SEC_USER_AGENT` | Ingestion (EDGAR requires a contact email in the user agent) |
 | `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_THINK` | Agent (defaults: `http://localhost:11434`, `trading-analyst`, `16384`, `true`) |
 | `BENCHMARK` | Quant engine (default `SPY`) |
+| `SCREEN_TOP_N` | S&P 500 screen: how many picks get the full pipeline (default `20`) |
 | `SENTIMENT_MODEL` | Processing (default FinBERT) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Weekly digest and alerts |
 | `QUANT_API_TOKEN` | Local API: empty = answer this machine only |
@@ -224,7 +236,7 @@ Set in `.env` (never commit it). The app's settings go in `app/config.json` inst
 |---|---|---|---|
 | P1 Foundations | Supabase schema, daily ingestion | 7 days of data without errors | In progress (earliest pass 2026-11-19) |
 | P2 Knowledge | Embeddings, quant engine, retrieval | Relevant chunks on 10 test queries | **Passed** |
-| P3 Agent | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON | 1 / 4 |
+| P3 Agent | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON | 1 / 4 (from the next run: top 20 S&P 500 picks, ~20 min) |
 | P4 App | Flutter app (web, Android, iOS) | Invite-only testers for 2 weeks | App written; web publish via GitHub Pages set up |
 | P5 Quantum + eval | QAOA, quantum kernel, scoring | Quantum vs classical benchmark report | Not started |
 

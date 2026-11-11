@@ -133,6 +133,28 @@ class Store:
         res = self.db.table("tickers").select("symbol").eq("active", True).execute()
         return [r["symbol"] for r in (res.data or [])]
 
+    # ------------------------------------------------------------ S&P 500 screen
+    def sp500_symbols(self) -> list[str]:
+        rows = self._select_all(lambda: self.db.table("tickers").select("symbol").eq("in_sp500", True).order("symbol"))
+        return [r["symbol"] for r in rows]
+
+    def upsert_screens(self, rows: Sequence[dict]) -> int:
+        return self._upsert("screens", rows, on_conflict="as_of,ticker")
+
+    def latest_selected(self) -> list[str]:
+        """Tickers selected by the most recent screen, best rank first."""
+        latest = (self.db.table("screens").select("as_of").eq("selected", True)
+                  .order("as_of", desc=True).limit(1).execute().data)
+        if not latest:
+            return []
+        rows = (self.db.table("screens").select("ticker,rank").eq("as_of", latest[0]["as_of"])
+                .eq("selected", True).order("rank").execute().data or [])
+        return [r["ticker"] for r in rows]
+
+    def has_documents(self, ticker: str) -> bool:
+        res = self.db.table("documents").select("id").eq("ticker", ticker).limit(1).execute()
+        return bool(res.data)
+
     # PostgREST caps responses (1000 rows by default), so page through.
     def _select_all(self, build: Callable[[], Any], page: int = 1000) -> list[dict]:
         out: list[dict] = []

@@ -11,6 +11,9 @@ abstract class DataSource {
   Future<List<Suggestion>> tickerHistory(String ticker);
   Future<List<PricePoint>> prices(String ticker, {int days = 365});
   Future<Map<int, Citation>> citations(List<int> ids);
+
+  /// The latest weekly S&P 500 screen (empty before the first screen has run).
+  Future<ScreenResult> latestScreen();
 }
 
 class SupabaseDataSource implements DataSource {
@@ -89,23 +92,47 @@ class SupabaseDataSource implements DataSource {
     }
     return out;
   }
+
+  @override
+  Future<ScreenResult> latestScreen() async {
+    final latest = await db
+        .from('screens')
+        .select('as_of')
+        .eq('selected', true)
+        .order('as_of', ascending: false)
+        .limit(1);
+    if (latest.isEmpty) return const ScreenResult();
+    final asOf = latest.first['as_of'].toString();
+    final rows = await db.from('screens').select('ticker,rank,selected,metrics').eq('as_of', asOf);
+    return ScreenResult(
+      asOf: asOf,
+      screened: rows.length,
+      picks: {
+        for (final r in rows)
+          if (r['selected'] == true && r['rank'] != null) r['ticker'].toString(): ScreenPick.fromJson(r),
+      },
+    );
+  }
 }
 
-/// One ticker's two views for the week.
+/// One ticker's two views for the week, plus its place in the S&P 500 screen.
 class TickerViews {
-  const TickerViews(this.ticker, {this.medium, this.long});
+  const TickerViews(this.ticker, {this.medium, this.long, this.pick});
 
   final String ticker;
   final Suggestion? medium;
   final Suggestion? long;
+  final ScreenPick? pick;
 
   Stance get lead => (medium ?? long)?.stance ?? Stance.neutral;
 }
 
 class HomeStats {
-  const HomeStats({this.tickers = 0, this.views = 0, this.bullish = 0, this.sources = 0, this.changed = 0});
+  const HomeStats(
+      {this.tickers = 0, this.views = 0, this.bullish = 0, this.sources = 0, this.changed = 0, this.screened = 0});
 
   final int tickers, views, bullish, sources, changed;
+  final int screened; // S&P 500 stocks screened to pick these (0 before the first screen)
 }
 
 class HomeData {
@@ -126,13 +153,20 @@ void markChanges(List<Suggestion> current, Map<String, Stance> previous) {
   }
 }
 
-List<TickerViews> groupByTicker(List<Suggestion> rows) {
+/// One card per ticker: best screen rank first, then alphabetical for anything unranked.
+List<TickerViews> groupByTicker(List<Suggestion> rows, [Map<String, ScreenPick> picks = const {}]) {
   final by = <String, Map<String, Suggestion>>{};
   for (final s in rows) {
     (by[s.ticker] ??= {})[s.horizon] = s;
   }
-  final tickers = by.keys.toList()..sort();
-  return [for (final t in tickers) TickerViews(t, medium: by[t]!['medium'], long: by[t]!['long'])];
+  final tickers = by.keys.toList()
+    ..sort((a, b) {
+      final ra = picks[a]?.rank ?? 1 << 30, rb = picks[b]?.rank ?? 1 << 30;
+      return ra != rb ? ra.compareTo(rb) : a.compareTo(b);
+    });
+  return [
+    for (final t in tickers) TickerViews(t, medium: by[t]!['medium'], long: by[t]!['long'], pick: picks[t]),
+  ];
 }
 
 Future<HomeData> loadHome(DataSource ds) async {
@@ -145,7 +179,13 @@ Future<HomeData> loadHome(DataSource ds) async {
       : {for (final s in await ds.suggestionsForRun(prev.id)) s.key: s.stance};
   markChanges(rows, before);
   final cites = await ds.citations([for (final s in rows) ...s.chunkIds]);
-  final cards = groupByTicker(rows);
+  ScreenResult screen;
+  try {
+    screen = await ds.latestScreen();
+  } catch (_) {
+    screen = const ScreenResult(); // no screen yet (or table not created): plain alphabetical list
+  }
+  final cards = groupByTicker(rows, screen.picks);
   return HomeData(
     run: run,
     cards: cards,
@@ -156,6 +196,7 @@ Future<HomeData> loadHome(DataSource ds) async {
       bullish: rows.where((s) => s.stance == Stance.bullish).length,
       sources: cites.length,
       changed: rows.where((s) => s.change == Change.isNew || s.change == Change.changed).length,
+      screened: screen.screened,
     ),
   );
 }

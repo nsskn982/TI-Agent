@@ -135,6 +135,46 @@ for news volume this week against the previous 12 weeks.
 **API** ([api.py](../quant/api.py)), run with `uvicorn quant.api:app`. Dates in the future are rejected
 with HTTP 400, and an unknown ticker returns 404. All floats are rounded, and NaN/inf come back as `null`.
 
+## 5a. Weekly S&P 500 screen ([quant/screen.py](../quant/screen.py), [orchestration/screen_run.py](../orchestration/screen_run.py))
+
+Analysing all ~503 S&P 500 stocks with retrieval and the LLM doesn't fit the free tier: about a million
+text chunks (Supabase free is 0.5 GB), and about 7 hours of laptop GPU time per week. So the pipeline is a
+two-stage filter:
+
+1. **Screen everything, cheaply** (GitHub Actions, Fridays 23:30 UTC, [screen.yml](../.github/workflows/screen.yml)):
+   - Constituents come from Wikipedia's S&P 500 list, stored in Yahoo/SEC form (`BRK-B`).
+   - About 800 days of prices are downloaded in batches of 100.
+   - SEC XBRL fundamentals are fetched for every company.
+   - The score is computed in code from data strictly before the as-of date.
+2. **Analyse only the top N** (default 20). Picks with no documents get two years of news and filings, then
+   chunking, embeddings and FinBERT. The daily ingest and the Saturday agent run default to the latest picks.
+   `watchlist.txt` is used only before the first screen, or when `--tickers` is passed.
+
+**Score: momentum among quality companies.**
+- **Quality filter**, point in time from SEC facts:
+  - the latest quarter ended less than 200 days ago
+  - TTM net margin > 0
+  - TTM free cash flow > 0 where it can be computed (banks often have no capex tag; for them FCF is
+    unknown and doesn't fail the filter)
+- **Score** among the companies that pass:
+  - 0.50 × z(12-1 month return), the classic momentum signal [[R3]](references.md#ref-r3)
+  - \+ 0.25 × z(6-month return vs SPY)
+  - \+ 0.25 × z(3-month return vs SPY)
+  - − 0.20 × z(6-month volatility)
+  - z-scores are winsorised at ±3
+
+The profitability and cash-flow filter follows the quality literature [[R4]](references.md#ref-r4). Each pick's
+numbers are stored in `screens.metrics`, and the app shows them as "why it made the list". They come from code,
+not the LLM.
+
+**Limitations.**
+- **Restructured companies:** a company that has just moved to a new SEC registrant (e.g. ExxonMobil
+  Holdings Corp in 2026) has no four-quarter history under its new CIK. It shows as "no SEC financials" and
+  is skipped until it has been filing under the new CIK for about a year.
+- **Survivorship bias:** the universe is *today's* S&P 500, so backtests miss companies that left the index.
+- **Hindsight:** past momentum doesn't guarantee future returns. The agent's stance is still judged relative
+  to the S&P 500.
+
 ## 6. M5: Retrieval ([retrieval/](../retrieval/))
 
 `Retriever.search(query, as_of, k, ticker, source, rerank, max_per_doc, recency_half_life_days)`:

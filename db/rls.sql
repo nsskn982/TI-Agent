@@ -76,3 +76,10 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function app_citations(bigint[]) from public, anon;
 grant execute on function app_citations(bigint[]) to authenticated, service_role;
+
+-- S&P 500 screen: signed-in users see the ranking and why each pick made the list.
+alter table screens enable row level security;
+drop policy if exists "authenticated read" on screens;
+create policy "authenticated read" on screens for select to authenticated using (true);
+grant select on screens to authenticated;
+grant all on screens to service_role;

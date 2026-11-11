@@ -118,6 +118,29 @@ Before the first publish:
 2. In Supabase, turn **off** public sign-ups and create users (see [security.md](security.md)).
 3. Add the `SUPABASE_ANON_KEY` repository secret, and set *Settings → Pages → Source* to *GitHub Actions*.
 
+## S&P 500 screen (added 2026-11-11)
+
+The watchlist is no longer hand-picked. Every Friday a GitHub Action screens the whole S&P 500 (503
+stocks) and keeps the **top 20**; see [architecture.md §5a](architecture.md#5a-weekly-sp-500-screen-quantscreenpy-orchestrationscreen_runpy).
+
+- **Score:** momentum among quality companies. Quality means profitable and cash-generating, from SEC
+  financials. Momentum blends the 12-1 month return with 6- and 3-month returns vs the S&P 500, minus a
+  volatility penalty.
+- **Pipeline:** the picks get two years of news and filings, then embeddings. The daily ingest and the
+  weekly agent run use the picks automatically.
+- **App:** lists the picks in rank order, with each one's rank, sector and the numbers behind its place.
+- **Checked live:** the Wikipedia list (503 constituents, 11 sectors, every one with an SEC CIK) and the
+  batched price download (including `BRK-B` and `BF-B`).
+- **Tests:** 14 new Python tests for parsing, the momentum maths, the quality filter, ranking,
+  no-lookahead and the fallback; Dart tests for rank ordering.
+
+**Before the first screen:** re-run `db/schema.sql` (adds `screens` and the ticker columns) and then
+`db/rls.sql` (lets the app read `screens`). Then start the *Weekly S&P 500 screen* workflow by hand.
+
+**Costs:** the weekly agent run goes from 5 tickers (~4 min) to 20 (~20 min). The first screen downloads
+about 2.5 GB of SEC data and backfills 20 tickers (~45–60 min in Actions). Later weeks only backfill new
+entrants.
+
 ## Next steps
 
 1. Fix whatever the first *App (Flutter)* workflow run reports, then check the published web app.

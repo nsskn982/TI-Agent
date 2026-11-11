@@ -18,9 +18,10 @@ Map<String, dynamic> sugJson(String ticker, String horizon, String stance,
 
 /// In-memory stand-in for Supabase.
 class FakeData implements DataSource {
-  FakeData({this.previous = const []});
+  FakeData({this.previous = const [], this.screen = const ScreenResult()});
 
   final List<Map<String, dynamic>> previous;
+  final ScreenResult screen;
   int citationCalls = 0;
 
   final current = [
@@ -66,4 +67,7 @@ class FakeData implements DataSource {
         ),
     };
   }
+
+  @override
+  Future<ScreenResult> latestScreen() async => screen;
 }

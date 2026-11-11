@@ -42,6 +42,27 @@ class FakeStore:
             self._next_id += 1
         return len(rows)
 
+    # S&P 500 screen
+    def sp500_symbols(self):
+        return sorted(s for s, t in self.tickers.items() if t.get("in_sp500"))
+
+    def upsert_screens(self, rows):
+        if not hasattr(self, "screens"):
+            self.screens = {}
+        for r in rows:
+            self.screens[(r["as_of"], r["ticker"])] = dict(r)
+        return len(rows)
+
+    def latest_selected(self):
+        picks = [r for r in getattr(self, "screens", {}).values() if r.get("selected")]
+        if not picks:
+            return []
+        latest = max(r["as_of"] for r in picks)
+        return [r["ticker"] for r in sorted((r for r in picks if r["as_of"] == latest), key=lambda r: r["rank"])]
+
+    def has_documents(self, ticker):
+        return any(d["ticker"] == ticker for d in self.documents.values())
+
     def existing_source_ids(self, ticker, source):
         return {d["source_id"] for d in self.documents.values() if d["ticker"] == ticker and d["source"] == source}
 

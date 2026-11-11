@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from ingestion.fundamentals import METRICS
 
-QUARTER_DAYS = (75, 105)
+QUARTER_DAYS = (75, 119)  # 12-17 week fiscal quarters (Costco's Q4 is 16 weeks)
 # Units we accept per metric family; anything else (other currencies) is ignored.
 UNITS = {"USD", "USD/shares", "shares"}
 

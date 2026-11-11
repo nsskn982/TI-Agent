@@ -118,3 +118,13 @@ This is the source of the RRF formula used in [retrieval/search.py](../retrieval
 <a id="ref-r2"></a>**[R2]** J. W. Wilder.
 *New Concepts in Technical Trading Systems.* 1978.
 This is the source of the RSI smoothing used in [quant/indicators.py](../quant/indicators.py).
+
+<a id="ref-r3"></a>**[R3]** N. Jegadeesh, S. Titman.
+*Returns to Buying Winners and Selling Losers: Implications for Stock Market Efficiency.*
+Journal of Finance 48(1), 1993. [doi:10.1111/j.1540-6261.1993.tb04702.x](https://doi.org/10.1111/j.1540-6261.1993.tb04702.x)
+This is the momentum effect behind the 12-1 month return in [quant/screen.py](../quant/screen.py).
+
+<a id="ref-r4"></a>**[R4]** C. S. Asness, A. Frazzini, L. H. Pedersen.
+*Quality Minus Junk.* Review of Accounting Studies 24, 2019.
+[doi:10.1007/s11142-018-9470-2](https://doi.org/10.1007/s11142-018-9470-2)
+This is the basis for the profitability and cash-flow filter in [quant/screen.py](../quant/screen.py).

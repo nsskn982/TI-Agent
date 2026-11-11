@@ -137,6 +137,39 @@ class Citation {
       );
 }
 
+/// One stock's row in the weekly S&P 500 screen (momentum among quality companies).
+class ScreenPick {
+  const ScreenPick({required this.ticker, required this.rank, this.metrics = const {}});
+
+  final String ticker;
+  final int rank; // 1 = strongest
+  final Map<String, dynamic> metrics;
+
+  double? metric(String key) => (metrics[key] as num?)?.toDouble();
+  String? get sector => metrics['sector'] as String?;
+
+  factory ScreenPick.fromJson(Map<String, dynamic> j) => ScreenPick(
+        ticker: j['ticker'].toString(),
+        rank: (j['rank'] as num).toInt(),
+        metrics: Map<String, dynamic>.from((j['metrics'] as Map?) ?? const {}),
+      );
+}
+
+class ScreenResult {
+  const ScreenResult({this.asOf, this.picks = const {}, this.screened = 0});
+
+  final String? asOf;
+  final Map<String, ScreenPick> picks; // by ticker
+  final int screened; // how many S&P 500 stocks were screened
+}
+
+/// "+62%" / "-4%" for a fraction like 0.62.
+String fmtPct(double? v, {bool signed = true}) {
+  if (v == null) return '–';
+  final s = '${(v * 100).toStringAsFixed(0)}%';
+  return signed && v >= 0 ? '+$s' : s;
+}
+
 class PricePoint {
   const PricePoint(this.date, this.price);
 

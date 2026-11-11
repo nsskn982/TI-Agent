@@ -180,17 +180,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="Fetch but do not write to Supabase")
     args = p.parse_args(argv)
 
-    tickers = load_watchlist(args.tickers)
-    if not tickers:
-        log.error("Empty watchlist: pass --tickers or fill watchlist.txt")
-        return 2
-
     started = datetime.now(timezone.utc)
     store = None
     if not args.dry_run:
         from common.store import Store
 
         store = Store()
+
+    # Default: the latest S&P 500 screen's picks (orchestration/screen_run.py); watchlist.txt
+    # until the first screen has run. --tickers or WATCHLIST still override.
+    tickers = load_watchlist(args.tickers)
+    if not args.tickers and not env("WATCHLIST"):
+        from ingestion.universe import focus_tickers
+
+        tickers = focus_tickers(store, tickers)
+    if not tickers:
+        log.error("Empty watchlist: pass --tickers or fill watchlist.txt")
+        return 2
 
     log.info("Ingesting %s for %s (last %d days)", ",".join(args.sources), ",".join(tickers), args.days)
     run = ingest(tickers, args.days, tuple(args.sources), store, args.dry_run)

@@ -115,13 +115,17 @@ class _Hero extends StatelessWidget {
                   Text(
                     run == null
                         ? 'Nothing to show yet. Suggestions appear here after the weekly run.'
-                        : 'Two horizons for every ticker, judged against the benchmark. Every claim is cited and every number comes from code.',
+                        : s.screened > 0
+                            ? 'The ${s.tickers} strongest of ${s.screened} S&P 500 stocks: momentum among profitable, cash-generating '
+                                'companies. Each gets two AI views, judged against the S&P 500. Every claim is cited.'
+                            : 'Two horizons for every ticker, judged against the benchmark. Every claim is cited and every number comes from code.',
                     style: text.titleMedium?.copyWith(color: TiColors.ink2(context), height: 1.4),
                   ),
                   if (run != null) ...[
                     const SizedBox(height: 28),
                     Wrap(spacing: 28, runSpacing: 16, children: [
-                      _Stat(s.tickers, 'tickers'),
+                      if (s.screened > 0) _Stat(s.screened, 'S&P 500 screened'),
+                      _Stat(s.tickers, s.screened > 0 ? 'top picks' : 'tickers'),
                       _Stat(s.views, 'views'),
                       _Stat(s.bullish, 'bullish'),
                       _Stat(s.sources, 'cited passages'),
@@ -271,7 +275,18 @@ class _Tile extends StatelessWidget {
         border: Border.all(color: TiColors.border(context)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(c.ticker, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+        Row(children: [
+          Expanded(child: Text(c.ticker, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
+          if (c.pick != null)
+            Text('#${c.pick!.rank}',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: TiColors.ink2(context))),
+        ]),
+        if (c.pick != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('${fmtPct(c.pick!.metric('mom_12_1'))} momentum',
+                style: TextStyle(fontSize: 12, color: TiColors.muted(context))),
+          ),
         row('1–3 months', c.medium),
         row('6–24 months', c.long),
       ]),
@@ -310,7 +325,10 @@ class _TickerScene extends StatelessWidget {
                 scale: 1.25 - 0.25 * t,
                 alignment: Alignment.bottomLeft,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${(index + 1).toString().padLeft(2, '0')} / ${count.toString().padLeft(2, '0')}',
+                  Text(
+                      c.pick != null
+                          ? 'RANK #${c.pick!.rank}${c.pick!.sector != null ? ' · ${c.pick!.sector!.toUpperCase()}' : ''}'
+                          : '${(index + 1).toString().padLeft(2, '0')} / ${count.toString().padLeft(2, '0')}',
                       style: TextStyle(fontSize: 12, letterSpacing: 1.6, color: TiColors.muted(context))),
                   Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                     Flexible(
@@ -327,6 +345,7 @@ class _TickerScene extends StatelessWidget {
             ),
           ),
         ),
+        if (c.pick != null) ...[const SizedBox(height: 12), _PickFacts(c.pick!)],
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
@@ -427,4 +446,36 @@ class _Message extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// Why a stock made the list: the screen's own numbers (computed in code, not by the LLM).
+class _PickFacts extends StatelessWidget {
+  const _PickFacts(this.pick);
+
+  final ScreenPick pick;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget fact(String label, String value) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: TiColors.border(context)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text(label, style: TextStyle(fontSize: 11, color: TiColors.muted(context))),
+            Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          ]),
+        );
+    final fcf = pick.metric('fcf_ttm');
+    return Wrap(spacing: 8, runSpacing: 8, children: [
+      fact('Momentum (12-1 mo)', fmtPct(pick.metric('mom_12_1'))),
+      fact('vs S&P 500, 6 mo', fmtPct(pick.metric('rel_6m'))),
+      fact('vs S&P 500, 3 mo', fmtPct(pick.metric('rel_3m'))),
+      fact('Volatility', fmtPct(pick.metric('vol_6m'), signed: false)),
+      fact('Net margin', fmtPct(pick.metric('net_margin'), signed: false)),
+      fact('Free cash flow', fcf == null ? 'n/a' : (fcf > 0 ? 'Positive' : 'Negative')),
+    ]);
+  }
 }

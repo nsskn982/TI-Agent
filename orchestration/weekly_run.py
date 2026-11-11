@@ -80,7 +80,6 @@ def main(argv: list[str] | None = None) -> int:
     from retrieval.search import Retriever
 
     notify = None if args.no_telegram else telegram.send
-    tickers = load_watchlist(args.tickers)
     llm = OllamaClient()
     try:
         llm.check()
@@ -94,6 +93,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     store = Store()
+    # Default: this week's S&P 500 screen picks, best first (watchlist.txt before the first screen).
+    tickers = load_watchlist(args.tickers)
+    if not args.tickers:
+        from ingestion.universe import focus_tickers
+
+        tickers = focus_tickers(store, tickers)
+    log.info("Analysing %d tickers: %s", len(tickers), ", ".join(tickers))
     status, _, failures = run(tickers, args.as_of, store, Retriever(store, Embedder()), llm, notify,
                               max_steps=args.max_steps)
     log.info("Weekly run finished: %s (%d failures)", status, len(failures))

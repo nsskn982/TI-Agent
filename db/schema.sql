@@ -280,3 +280,22 @@ begin
         alter publication supabase_realtime add table suggestions;
     end if;
 end $$;
+
+-- ---------------------------------------------------------------- S&P 500 screen (weekly)
+-- The whole S&P 500 is screened cheaply (prices + SEC fundamentals). Only the top N
+-- ("selected") get news, filings, embeddings and LLM suggestions.
+alter table tickers add column if not exists in_sp500 boolean not null default false;
+alter table tickers add column if not exists sector   text;
+
+create table if not exists screens (
+    as_of           date not null,
+    ticker          text not null references tickers(symbol) on delete cascade,
+    rank            int,                         -- 1 = best; null = failed quality or not enough data
+    score           double precision,
+    quality_pass    boolean not null,
+    selected        boolean not null default false,  -- in the top N handed to the agent
+    metrics         jsonb not null default '{}'::jsonb,
+    created_at      timestamptz not null default now(),
+    primary key (as_of, ticker)
+);
+create index if not exists screens_selected_idx on screens (as_of desc, rank) where selected;

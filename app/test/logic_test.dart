@@ -71,6 +71,31 @@ void main() {
       expect(home.cards.last.medium!.change, Change.isNew);
     });
 
+    test('orders cards by screen rank and reports how many were screened', () async {
+      final home = await loadHome(FakeData(
+        screen: const ScreenResult(asOf: '2026-11-14', screened: 503, picks: {
+          'MSFT': ScreenPick(ticker: 'MSFT', rank: 1, metrics: {'mom_12_1': 0.62, 'sector': 'Information Technology'}),
+          'AAPL': ScreenPick(ticker: 'AAPL', rank: 7),
+        }),
+      ));
+      expect(home.cards.map((c) => c.ticker), ['MSFT', 'AAPL']);
+      expect(home.cards.first.pick!.metric('mom_12_1'), 0.62);
+      expect(home.stats.screened, 503);
+    });
+
+    test('a failing screen lookup still shows the suggestions', () async {
+      final home = await loadHome(_BrokenScreen());
+      expect(home.cards.map((c) => c.ticker), ['AAPL', 'MSFT']);
+      expect(home.stats.screened, 0);
+    });
+
+    test('percent formatting', () {
+      expect(fmtPct(0.624), '+62%');
+      expect(fmtPct(-0.04), '-4%');
+      expect(fmtPct(0.25, signed: false), '25%');
+      expect(fmtPct(null), '–');
+    });
+
     test('rebase starts at 100', () {
       final r = rebase([PricePoint(DateTime(2026), 50), PricePoint(DateTime(2026, 1, 2), 55)]);
       expect(r.map((p) => p.value), [100, closeTo(110, 1e-9)]);
@@ -82,4 +107,9 @@ void main() {
     expect(contactLinks(linkedin: 'https://www.linkedin.com/in/x', github: 'javascript:x').map((l) => l.label),
         ['LinkedIn']);
   });
+}
+
+class _BrokenScreen extends FakeData {
+  @override
+  Future<ScreenResult> latestScreen() async => throw Exception('relation "screens" does not exist');
 }

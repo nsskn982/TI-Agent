@@ -44,6 +44,48 @@ def frame_to_rows(symbol: str, df: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def split_download(df: pd.DataFrame, symbols: list[str]) -> dict[str, list[dict]]:
+    """Rows per symbol from a multi-ticker yf.download frame (columns: (symbol, field))."""
+    out: dict[str, list[dict]] = {}
+    if df is None or df.empty:
+        return out
+    if not isinstance(df.columns, pd.MultiIndex):  # a single symbol comes back flat
+        return {symbols[0]: frame_to_rows(symbols[0], df)} if len(symbols) == 1 else out
+    level0 = set(df.columns.get_level_values(0))
+    for s in symbols:
+        if s in level0:
+            rows = frame_to_rows(s, df[s].dropna(how="all"))
+            if rows:
+                out[s] = rows
+    return out
+
+
+def fetch_many(symbols: list[str], start: date, end: date | None = None, chunk: int = 100) -> dict[str, list[dict]]:
+    """Daily bars for many symbols, downloaded in chunks (one request per chunk, not per ticker).
+    Symbols that come back empty are retried one by one."""
+    import yfinance as yf
+
+    end = end or date.today() + timedelta(days=1)
+    out: dict[str, list[dict]] = {}
+    for i in range(0, len(symbols), chunk):
+        part = symbols[i:i + chunk]
+        try:
+            df = yf.download(part, start=start.isoformat(), end=end.isoformat(), auto_adjust=False,
+                             actions=False, group_by="ticker", threads=True, progress=False)
+            out.update(split_download(df, part))
+        except Exception as exc:
+            log.warning("batch download failed for %d symbols (%s); retrying one by one", len(part), exc)
+    for s in symbols:
+        if s not in out:
+            try:
+                rows = fetch_prices(s, start, end)
+                if rows:
+                    out[s] = rows
+            except Exception as exc:
+                log.warning("prices for %s failed: %s", s, exc)
+    return out
+
+
 def fetch_prices(symbol: str, start: date, end: date | None = None) -> list[dict]:
     import yfinance as yf
 

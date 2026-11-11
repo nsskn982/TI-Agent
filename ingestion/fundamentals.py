@@ -17,15 +17,17 @@ METRICS: dict[str, tuple[str, list[str]]] = {
         "us-gaap:Revenues",
         "us-gaap:SalesRevenueNet",
         "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax",
+        "us-gaap:RevenuesNetOfInterestExpense",  # banks and brokers (JPM, GS)
     ]),
     "gross_profit": ("flow", ["us-gaap:GrossProfit"]),
     "operating_income": ("flow", ["us-gaap:OperatingIncomeLoss"]),
-    "net_income": ("flow", ["us-gaap:NetIncomeLoss"]),
+    "net_income": ("flow", ["us-gaap:NetIncomeLoss", "us-gaap:ProfitLoss"]),  # ProfitLoss: e.g. Broadcom
     "eps_diluted": ("flow", ["us-gaap:EarningsPerShareDiluted"]),
     "cfo": ("flow", ["us-gaap:NetCashProvidedByUsedInOperatingActivities"]),
     "capex": ("flow", [
         "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment",
         "us-gaap:PaymentsToAcquireProductiveAssets",  # Amazon
+        "us-gaap:PaymentsToAcquireOtherPropertyPlantAndEquipment",  # Eli Lilly
     ]),
     "equity": ("instant", ["us-gaap:StockholdersEquity"]),
     "long_term_debt": ("instant", ["us-gaap:LongTermDebtNoncurrent", "us-gaap:LongTermDebt"]),

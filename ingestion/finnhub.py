@@ -29,7 +29,8 @@ def fetch_company_news(session: requests.Session, symbol: str, start: date, end:
     _throttle()
     resp = session.get(
         f"{BASE}/company-news",
-        params={"symbol": symbol, "from": start.isoformat(), "to": end.isoformat(), "token": token},
+        # Stored symbols use Yahoo/SEC form (BRK-B); Finnhub uses BRK.B.
+        params={"symbol": symbol.replace("-", "."), "from": start.isoformat(), "to": end.isoformat(), "token": token},
     )
     resp.raise_for_status()
     data = resp.json()
