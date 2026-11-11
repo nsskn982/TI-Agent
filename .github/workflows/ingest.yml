@@ -58,7 +58,8 @@ jobs:
           INPUT_DAYS: ${{ github.event.inputs.days || '5' }}
           INPUT_TICKERS: ${{ github.event.inputs.tickers }}
         run: |
-          # Inputs are passed via env (never ${{ }} inside the script) and validated.
+          # Inputs arrive as env vars (never as expressions pasted into the script) and are validated.
+          # Note: GitHub evaluates expression syntax even inside comments, so never write it here.
           [[ "$INPUT_DAYS" =~ ^[0-9]{1,4}$ ]] || { echo "days must be a number"; exit 1; }
           re='^[A-Za-z][A-Za-z0-9.-]{0,9}( [A-Za-z][A-Za-z0-9.-]{0,9}){0,49}$'
           if [ -n "$INPUT_TICKERS" ] && ! [[ "$INPUT_TICKERS" =~ $re ]]; then
