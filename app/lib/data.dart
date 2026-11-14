@@ -1,9 +1,10 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
 
 import 'models.dart';
+import 'session.dart';
 
-/// Everything the app reads. The Supabase implementation runs under row-level security
-/// as the signed-in user; tests use an in-memory fake.
+/// Everything the app reads. ApiDataSource reads the laptop's server as the signed-in
+/// user; tests use an in-memory fake.
 abstract class DataSource {
   Future<AgentRun?> latestRun();
   Future<AgentRun?> previousRun(int beforeId);
@@ -19,77 +20,63 @@ abstract class DataSource {
   Future<Map<String, Quote>> latestQuotes(List<String> tickers);
 }
 
-class SupabaseDataSource implements DataSource {
-  SupabaseDataSource(this.db);
+/// Reads the laptop's JSON API (web/dashboard/api.py) with the signed-in user's token.
+class ApiDataSource implements DataSource {
+  ApiDataSource(this.session);
 
-  final SupabaseClient db;
+  final Session session;
 
-  // Only these columns of agent_runs are granted to the app (not `error`).
-  static const _runColumns = 'id,as_of,status,model,started_at';
-  static const _good = ['ok', 'partial'];
+  Future<Map<String, dynamic>> _get(String path, [Map<String, String>? query]) async {
+    final r = await session.client
+        .get(session.uri(path, query), headers: {'Authorization': 'Bearer ${session.token ?? ''}'});
+    if (r.statusCode == 401) {
+      await session.signOut(); // token expired or revoked: back to the login screen
+      throw const ApiException('Signed out. Please sign in again.');
+    }
+    if (r.statusCode != 200) throw ApiException('Server error (HTTP ${r.statusCode}).');
+    return Map<String, dynamic>.from(jsonDecode(r.body) as Map);
+  }
 
-  @override
-  Future<AgentRun?> latestRun() async {
-    final rows = await db
-        .from('agent_runs')
-        .select(_runColumns)
-        .inFilter('status', _good)
-        .order('id', ascending: false)
-        .limit(1);
-    return rows.isEmpty ? null : AgentRun.fromJson(rows.first);
+  static List<Map<String, dynamic>> _rows(Map<String, dynamic> body) =>
+      [for (final r in (body['rows'] as List? ?? const [])) Map<String, dynamic>.from(r as Map)];
+
+  static AgentRun? _run(Map<String, dynamic> body) {
+    final run = body['run'];
+    return run == null ? null : AgentRun.fromJson(Map<String, dynamic>.from(run as Map));
   }
 
   @override
-  Future<AgentRun?> previousRun(int beforeId) async {
-    final rows = await db
-        .from('agent_runs')
-        .select(_runColumns)
-        .inFilter('status', _good)
-        .lt('id', beforeId)
-        .order('id', ascending: false)
-        .limit(1);
-    return rows.isEmpty ? null : AgentRun.fromJson(rows.first);
-  }
+  Future<AgentRun?> latestRun() async => _run(await _get('/api/runs/latest'));
 
   @override
-  Future<List<Suggestion>> suggestionsForRun(int runId) async {
-    final rows = await db.from('suggestions').select().eq('run_id', runId);
-    return [for (final r in rows) Suggestion.fromJson(r)];
-  }
+  Future<AgentRun?> previousRun(int beforeId) async => _run(await _get('/api/runs/latest', {'before': '$beforeId'}));
 
   @override
-  Future<List<Suggestion>> tickerHistory(String ticker) async {
-    final rows = await db
-        .from('suggestions')
-        .select()
-        .eq('ticker', ticker)
-        .order('as_of', ascending: false)
-        .limit(30);
-    return [for (final r in rows) Suggestion.fromJson(r)];
-  }
+  Future<List<Suggestion>> suggestionsForRun(int runId) async =>
+      [for (final r in _rows(await _get('/api/runs/$runId/suggestions'))) Suggestion.fromJson(r)];
 
   @override
-  Future<List<PricePoint>> prices(String ticker, {int days = 365}) async {
-    final since = DateTime.now().subtract(Duration(days: days)).toIso8601String().substring(0, 10);
-    final rows = await db
-        .from('prices')
-        .select('date,close,adj_close')
-        .eq('ticker', ticker)
-        .gte('date', since)
-        .order('date', ascending: true);
-    return rows.map(PricePoint.fromJson).whereType<PricePoint>().toList();
-  }
+  Future<List<Suggestion>> tickerHistory(String ticker) async => [
+        for (final r in _rows(await _get('/api/tickers/${Uri.encodeComponent(ticker)}/suggestions')))
+          Suggestion.fromJson(r),
+      ];
+
+  @override
+  Future<List<PricePoint>> prices(String ticker, {int days = 365}) async =>
+      _rows(await _get('/api/prices', {'tickers': ticker, 'days': '$days'}))
+          .map(PricePoint.fromJson)
+          .whereType<PricePoint>()
+          .toList();
 
   @override
   Future<Map<int, Citation>> citations(List<int> ids) async {
     final out = <int, Citation>{};
     final unique = ids.toSet().toList();
-    // app_citations() returns at most 20 rows per call, and only chunks some suggestion cites.
+    // The API returns at most 20 rows per call, and only chunks some suggestion cites.
     for (var i = 0; i < unique.length; i += 20) {
       final batch = unique.sublist(i, i + 20 > unique.length ? unique.length : i + 20);
-      final rows = await db.rpc('app_citations', params: {'ids': batch}) as List<dynamic>;
-      for (final r in rows) {
-        final c = Citation.fromJson(Map<String, dynamic>.from(r as Map));
+      for (final r in _rows(await _get('/api/citations', {'ids': batch.join(',')}))) {
+        final c = Citation.fromJson(r);
         out[c.id] = c;
       }
     }
@@ -99,13 +86,7 @@ class SupabaseDataSource implements DataSource {
   @override
   Future<Map<String, Quote>> latestQuotes(List<String> tickers) async {
     if (tickers.isEmpty) return {};
-    final since = DateTime.now().subtract(const Duration(days: 16)).toIso8601String().substring(0, 10);
-    final rows = await db
-        .from('prices')
-        .select('ticker,date,close,adj_close')
-        .inFilter('ticker', tickers)
-        .gte('date', since)
-        .order('date', ascending: true);
+    final rows = _rows(await _get('/api/prices', {'tickers': tickers.join(','), 'days': '16'}));
     final by = <String, List<PricePoint>>{};
     for (final r in rows) {
       final p = PricePoint.fromJson(r);
@@ -116,17 +97,11 @@ class SupabaseDataSource implements DataSource {
 
   @override
   Future<ScreenResult> latestScreen() async {
-    final latest = await db
-        .from('screens')
-        .select('as_of')
-        .eq('selected', true)
-        .order('as_of', ascending: false)
-        .limit(1);
-    if (latest.isEmpty) return const ScreenResult();
-    final asOf = latest.first['as_of'].toString();
-    final rows = await db.from('screens').select('ticker,rank,selected,metrics').eq('as_of', asOf);
+    final body = await _get('/api/screen/latest');
+    if (body['as_of'] == null) return const ScreenResult();
+    final rows = _rows(body);
     return ScreenResult(
-      asOf: asOf,
+      asOf: body['as_of'].toString(),
       screened: rows.length,
       picks: {
         for (final r in rows)
@@ -134,6 +109,15 @@ class SupabaseDataSource implements DataSource {
       },
     );
   }
+}
+
+class ApiException implements Exception {
+  const ApiException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// One ticker's two views for the week, plus its place in the S&P 500 screen.

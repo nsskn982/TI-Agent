@@ -19,6 +19,12 @@ if not exist "%PY%" (
     goto :finish
 )
 
+call scripts\ensure_db.cmd
+if errorlevel 1 (
+    set "RC=2"
+    goto :finish
+)
+
 rem --- Ollama must be running; start it if it isn't ---------------------------
 curl.exe -s -o nul --max-time 3 http://127.0.0.1:11434/api/version
 if errorlevel 1 (

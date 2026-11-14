@@ -1,4 +1,5 @@
--- TI Agent schema (M3). Run in the Supabase SQL editor, then run rls.sql.
+-- TI Agent schema (M3) for a local PostgreSQL 15+ with pgvector.
+-- Applied by `python -m common.db_init` (and by the Docker container on first start).
 -- Idempotent: safe to re-run.
 
 create extension if not exists vector;
@@ -269,17 +270,6 @@ as $$
     )
     select count(*)::int from u;
 $$;
-
--- Realtime feed for the app (M9).
-do $$
-begin
-    if not exists (
-        select 1 from pg_publication_tables
-        where pubname = 'supabase_realtime' and tablename = 'suggestions'
-    ) then
-        alter publication supabase_realtime add table suggestions;
-    end if;
-end $$;
 
 -- ---------------------------------------------------------------- S&P 500 screen (weekly)
 -- The whole S&P 500 is screened cheaply (prices + SEC fundamentals). Only the top N

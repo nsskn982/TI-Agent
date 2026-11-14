@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Release builds need this to reach Supabase (Flutter's template only adds it to debug builds). -->
+    <!-- Release builds need this to reach the API (Flutter's template only adds it to debug builds). -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
     <application

@@ -1,7 +1,8 @@
 name: App (Flutter)
 
 # check:   analyze + test on every change to app/
-# web:     build the web app            -> deploy: GitHub Pages (main only)
+# web:     build the web app            -> deploy: GitHub Pages (main only); data comes from the
+#          laptop's API through its Cloudflare Tunnel (repository variable API_URL)
 # android: build a release APK          -> downloadable artifact "ti-agent-apk" on the run page
 on:
   push:
@@ -67,10 +68,9 @@ jobs:
           cache: true
       - run: flutter create --project-name ti_agent --org com.nsskn982 --platforms=web .
       - run: flutter pub get
-      - name: Write build config (public values only; refuses a service key)
+      - name: Write build config (public values only, the laptop API's https address)
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          API_URL: ${{ vars.API_URL }}
           LINKEDIN_URL: ${{ vars.LINKEDIN_URL }}
         run: bash tool/write_config.sh
       - name: Build web
@@ -102,10 +102,9 @@ jobs:
           cache: true
       - run: flutter create --project-name ti_agent --org com.nsskn982 --platforms=android .
       - run: flutter pub get
-      - name: Write build config (public values only; refuses a service key)
+      - name: Write build config (public values only, the laptop API's https address)
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          API_URL: ${{ vars.API_URL }}
           LINKEDIN_URL: ${{ vars.LINKEDIN_URL }}
         run: bash tool/write_config.sh
       - name: Build APK

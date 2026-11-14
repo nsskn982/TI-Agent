@@ -9,22 +9,22 @@ A local LLM writes trading suggestions, but only from evidence it retrieves and 
 code. Phases 1 and 2 build that evidence base.
 
 ```
-            daily, GitHub Actions                                 laptop, on demand
+            daily, Windows scheduled task                         laptop, on demand
  ┌──────────────────────────────────────────────┐        ┌───────────────────────────────┐
  │ M1 ingestion            M2 processing         │        │ M4 quant engine   M5 retrieval │
  │ yfinance  ─┐                                  │        │  /features        /search      │
  │ Finnhub   ─┼─► documents ─► chunks+embeddings │        │  /prices                       │
  │ EDGAR     ─┤        └─► FinBERT sentiment     │        │  /macro                        │
  │ XBRL      ─┤  fundamentals                    │        └──────────────▲────────────────┘
- │ FRED      ─┘  prices, macro_series            │                       │ reads (service key)
+ │ FRED      ─┘  prices, macro_series            │                       │ reads           
  └───────────────────────┬──────────────────────┘                       │
-                         ▼ writes (service key)                          │
+                         ▼ writes                                        │
                 ┌─────────────────────────────────────────────────────────┴┐
-                │ M3 Supabase: Postgres + pgvector (HNSW) + full-text search  │
+                │ M3 local PostgreSQL 17 + pgvector (HNSW) + full-text search │
                 └────────────────────────────────────────────────────────────┘
 ```
 
-Supabase is the only connection between modules: each module reads from and writes to it, and none
+The database is the only connection between modules: each module reads from and writes to it, and none
 calls another directly. All database access goes through [common/store.py](../common/store.py).
 Tests replace it with an in-memory fake ([tests/fakes.py](../tests/fakes.py)).
 
@@ -72,7 +72,7 @@ as packaged by sentence-transformers [[4]](references.md#ref-4), reads at most 2
 English words stays under that limit. News items stay as one chunk (headline + summary).
 
 **Embedding** ([embed.py](../processing/embed.py)). `all-MiniLM-L6-v2` produces normalised
-384-dimensional vectors. It is small enough to run on the free GitHub Actions CPU runners. Each chunk is
+384-dimensional vectors. It is small enough to run on a laptop CPU. Each chunk is
 embedded with a short header, `"AAPL 10-K: …"`, so passages from different companies end up apart in
 vector space. The stored text has no header; queries filtered by ticker get the same prefix.
 
@@ -94,9 +94,11 @@ is marked with `process_error` so it isn't retried forever.
   selective filter (one ticker out of many) can therefore return fewer than `k` rows without any error.
   `match_chunks` handles this by doing an exact search when a ticker is given; one ticker's corpus is
   small, so this is fast. Unfiltered queries use the index with a wider `ef_search`.
-- **Row-level security.** Signed-in (invite-only) users can read `suggestions`, `portfolio_runs`,
-  `performance`, `prices` and `tickers`. Everything else, including all search functions, needs the
-  service key.
+- **Local only.** The database runs in Docker and listens on 127.0.0.1, so nothing outside the laptop can
+  reach it. The Flutter app reads through the read-only app API ([web/dashboard/api.py](../web/dashboard/api.py)).
+- **Incremental refresh and retention.** After the first backfill only new data is fetched
+  ([ingestion/refresh.py](../ingestion/refresh.py)), and the weekly screen deletes data no module reads any more
+  ([orchestration/retention.py](../orchestration/retention.py)); see the README's *Data lifecycle*.
 
 ## 5. M4: Quant engine ([quant/](../quant/))
 
@@ -141,10 +143,10 @@ The universe is the **S&P 500** (large caps) plus the **S&P MidCap 400**, about 
 (S&P 600) are left out to keep the weekly SEC download and database size inside the free tiers.
 
 Analysing all of them with retrieval and the LLM doesn't fit the free tier: well over a million text chunks
-(Supabase free is 0.5 GB), and more than 10 hours of laptop GPU time per week. So the pipeline is a
+(several GB of vectors), and more than 10 hours of laptop GPU time per week. So the pipeline is a
 two-stage filter:
 
-1. **Screen everything, cheaply** (GitHub Actions, Fridays 23:30 UTC, [screen.yml](../.github/workflows/screen.yml)):
+1. **Screen everything, cheaply** (Windows scheduled task, Saturdays 01:30, [run_screen.cmd](../run_screen.cmd)):
    - Constituents come from Wikipedia's S&P 500 and S&P 400 lists, stored in Yahoo/SEC form (`BRK-B`).
      Each stock is tagged with its index (`in_sp500` / `in_sp400`); the S&P 400 list has no CIK, so CIKs
      come from SEC's ticker map.
@@ -267,7 +269,7 @@ watchlist:
 5. Sends the Telegram digest ([delivery/telegram.py](../delivery/telegram.py)), or an alert if the run
    failed. Messages are plain text and split to stay under Telegram's 4096-character limit.
 
-[scripts/register_weekly_task.ps1](../scripts/register_weekly_task.ps1) schedules the run in Windows
+[scripts/register_tasks.ps1](../scripts/register_tasks.ps1) schedules it (with the daily refresh and the weekly screen) in Windows
 Task Scheduler (Saturday 09:00 by default; if the PC was off, it runs when it's next on).
 
 **Remaining lookahead risk.** With a past `--as-of`, every input is still limited to data from before
@@ -276,9 +278,8 @@ with dates before the model's training cutoff should be treated as optimistic.
 
 ## 8. Website (M9, Django)
 
-[web/](../web/) is a server-rendered Django site. Data comes from Supabase through a read-only `Repo`
-([web/dashboard/repo.py](../web/dashboard/repo.py)) that uses the same `Store` as the pipeline. The
-service key stays on the server. Django's SQLite database holds only users and sessions, which keeps
+[web/](../web/) is a server-rendered Django site. Data comes from the local database through a read-only `Repo`
+([web/dashboard/repo.py](../web/dashboard/repo.py)) that uses the same `Store` as the pipeline. Django's SQLite database holds only users and sessions, which keeps
 access invite-only (the README's guardrail on MAR exposure) without a public sign-up flow.
 
 - **Escaping.** Everything the LLM writes passes through Django's auto-escaping, and links to sources are
@@ -296,8 +297,9 @@ access invite-only (the README's guardrail on MAR exposure) without a public sig
   appear instead. With `prefers-reduced-motion` or no JavaScript, it's a plain page with everything
   visible. Each view is compared with the previous good run and marked new, changed or unchanged.
 
-The Flutter app will read the same tables directly with the anon key and Supabase Auth, under the
-`authenticated` policies in `db/rls.sql`.
+The Flutter app reads the same data through `/api/` ([web/dashboard/api.py](../web/dashboard/api.py)): signed
+12-hour bearer tokens for the same invite-only accounts, CORS limited to the GitHub Pages origin, and only
+results (never raw documents or error text). It reaches the laptop through a Cloudflare Tunnel that exposes `/api/` only.
 
 ## 9. Later phases (planned)
 

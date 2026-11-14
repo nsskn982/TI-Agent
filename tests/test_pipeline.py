@@ -111,3 +111,20 @@ def test_benchmark_prices_always_fetched(monkeypatch):
     assert {t for t, _ in store.prices} == {"AAPL", "SPY"}
     assert store.tickers["SPY"]["active"] is False and store.tickers["AAPL"]["active"] is True
     assert len(store.fundamentals) == 1
+
+
+def test_out_of_memory_stops_processing_without_marking_failed():
+    import pytest
+    from processing import run as proc_run
+    from tests.fakes import FakeStore
+
+    class OOMEmbedder:
+        def encode(self, texts):
+            raise OSError(22, "The paging file is too small for this operation to complete")
+
+    store = FakeStore()
+    store.insert_documents([{"ticker": "AAPL", "source": "news", "source_id": "x", "title": "t", "body": "b",
+                             "published_at": "2026-11-10T00:00:00+00:00"}])
+    with pytest.raises(OSError):
+        proc_run.process(store, OOMEmbedder())
+    assert all(d["process_error"] is None for d in store.documents.values())

@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../session.dart';
 import '../theme.dart';
 import '../widgets/contact.dart';
 
-/// Email + password sign-in with Supabase Auth. There is deliberately no sign-up:
-/// accounts are created by the owner in the Supabase dashboard.
+/// Email + password sign-in against the laptop's API. There is deliberately no sign-up:
+/// the owner creates accounts with `python web/manage.py invite <name> --email <address>`.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, required this.session});
+
+  final Session session;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -33,15 +35,13 @@ class _LoginScreenState extends State<LoginScreen> {
       _busy = true;
       _error = null;
     });
-    try {
-      await Supabase.instance.client.auth.signInWithPassword(email: _email.text.trim(), password: _password.text);
-    } on AuthException catch (e) {
-      // Supabase's own message ("Invalid login credentials", rate limit, ...); never echo the password.
-      if (mounted) setState(() => _error = e.message);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Could not reach the server. Check your connection and try again.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    // The server's own message ("Invalid login credentials", too many attempts, ...).
+    final error = await widget.session.signIn(_email.text.trim(), _password.text);
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = error;
+      });
     }
   }
 

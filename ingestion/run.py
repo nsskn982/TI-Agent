@@ -5,7 +5,7 @@
     python -m ingestion.run --sources prices macro --dry-run
 
 Each source/ticker is isolated: one failure is logged and the rest continue.
-Exit code is 1 if anything failed, so the GitHub Action shows red.
+Exit code is 1 if anything failed.
 """
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ from datetime import date, datetime, timedelta, timezone
 from common import logging_setup
 from common.config import ROOT, benchmark, env, env_int, require
 from common.http import make_session
-from ingestion import edgar, finnhub, fred, fundamentals, prices
+from ingestion import edgar, finnhub, fred, fundamentals, prices, refresh
 
 log = logging.getLogger("ingestion")
 
 SOURCES = ("prices", "news", "filings", "fundamentals", "macro")
 
-# Adjusted closes are re-based whenever a dividend/split happens, so stored
-# history is refreshed in full each run instead of appending only new days.
+# The first run backfills this much history; later runs fetch only new days, and re-fetch
+# a ticker in full when a dividend/split re-bases its adjusted closes (ingestion/refresh.py).
 PRICE_HISTORY_DAYS = 800
 # A TTM figure a year ago needs facts filed up to ~2 years before the window.
 FUNDAMENTALS_EXTRA_DAYS = 760
@@ -102,9 +102,14 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
 
     if "prices" in sources:
         price_since = today - timedelta(days=max(days, PRICE_HISTORY_DAYS))
+        stored = refresh.marks(store, "price_marks", price_tickers)
         for t in price_tickers:
             try:
-                rows = prices.fetch_prices(t, price_since)
+                since_t = refresh.price_since(stored.get(t), price_since, today)
+                rows = prices.fetch_prices(t, since_t)
+                if since_t != price_since and refresh.rebased(stored.get(t), rows):
+                    log.info("%s: adjusted closes re-based (dividend/split); re-fetching full history", t)
+                    rows = prices.fetch_prices(t, price_since)
                 if not rows:
                     raise ValueError("no price rows returned")
                 run.write("prices", "upsert_prices", rows)
@@ -143,12 +148,14 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
 
     if "fundamentals" in sources and edgar_session is not None:
         filed_since = since - timedelta(days=FUNDAMENTALS_EXTRA_DAYS)
+        stored = refresh.marks(store, "fundamentals_marks", tickers)
         for t in tickers:
             info = cik_map.get(t)
             if info is None:
                 continue
             try:
-                rows = fundamentals.fetch_fundamentals(edgar_session, t, info["cik"], filed_since)
+                rows = fundamentals.fetch_fundamentals(edgar_session, t, info["cik"],
+                                                       refresh.filed_since(stored.get(t), filed_since))
                 run.write("fundamentals", "upsert_fundamentals", rows)
             except Exception as exc:
                 run.fail("fundamentals", t, exc)
@@ -177,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tickers", nargs="*", help="Override watchlist")
     p.add_argument("--days", type=int, default=5, help="Lookback window in days (use ~730 for backfill)")
     p.add_argument("--sources", nargs="*", choices=SOURCES, default=list(SOURCES))
-    p.add_argument("--dry-run", action="store_true", help="Fetch but do not write to Supabase")
+    p.add_argument("--dry-run", action="store_true", help="Fetch but do not write to the database")
     args = p.parse_args(argv)
 
     started = datetime.now(timezone.utc)

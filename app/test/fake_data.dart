@@ -16,7 +16,7 @@ Map<String, dynamic> sugJson(String ticker, String horizon, String stance,
       'as_of': '2026-11-11',
     };
 
-/// In-memory stand-in for Supabase.
+/// In-memory stand-in for the laptop API.
 class FakeData implements DataSource {
   FakeData({this.previous = const [], this.screen = const ScreenResult()});
 

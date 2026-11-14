@@ -1,7 +1,7 @@
-"""Read-only access to Supabase for the website.
+"""Read-only access to the local PostgreSQL database for the website.
 
 Every page reads through `Repo`, so tests can substitute a fake. The website
-never writes to Supabase: it shows what the pipeline produced.
+never writes to the database: it shows what the pipeline produced.
 """
 from __future__ import annotations
 
@@ -33,41 +33,33 @@ class Repo:
 
             store = Store()
         self.store = store
-        self.db = store.db
 
     # ------------------------------------------------------------ runs
     def agent_runs(self, limit: int = 20) -> list[dict]:
-        return self.db.table("agent_runs").select("*").order("id", desc=True).limit(limit).execute().data or []
+        return self.store.agent_runs(limit)
 
     def latest_good_run(self) -> dict | None:
-        rows = (self.db.table("agent_runs").select("*").in_("status", ["ok", "partial"])
-                .order("id", desc=True).limit(1).execute().data)
-        return rows[0] if rows else None
+        return self.store.latest_good_run()
 
     def ingestion_runs(self, limit: int = 40) -> list[dict]:
-        return (self.db.table("ingestion_runs").select("job,started_at,finished_at,status,counts,errors")
-                .order("started_at", desc=True).limit(limit).execute().data or [])
+        return self.store.ingestion_runs(limit)
 
     # ------------------------------------------------------------ suggestions
     def suggestions_for_run(self, run_id: int) -> list[dict]:
-        return (self.db.table("suggestions").select("*").eq("run_id", run_id)
-                .order("ticker").execute().data or [])
+        return self.store.suggestions_for_run(run_id)
 
     def ticker_suggestions(self, ticker: str, limit: int = 30) -> list[dict]:
-        return (self.db.table("suggestions").select("*").eq("ticker", ticker)
-                .order("as_of", desc=True).limit(limit).execute().data or [])
+        return self.store.ticker_suggestions(ticker, limit)
 
     def tickers(self) -> list[dict]:
-        return (self.db.table("tickers").select("symbol,name,active").eq("active", True)
-                .order("symbol").execute().data or [])
+        return self.store.tickers()
 
     # ------------------------------------------------------------ citations
     def chunks(self, ids: list[int]) -> dict[int, dict]:
         """{chunk_id: chunk + its document's title/url} for the given ids."""
         if not ids:
             return {}
-        rows = (self.db.table("chunks").select("id,document_id,ticker,source,doc_type,published_at,content")
-                .in_("id", sorted(set(ids))).execute().data or [])
+        rows = self.store.get_chunks(ids)
         meta = self.store.get_document_meta(sorted({r["document_id"] for r in rows}))
         out = {}
         for r in rows:

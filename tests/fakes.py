@@ -63,6 +63,26 @@ class FakeStore:
         latest = max(r["as_of"] for r in picks)
         return [r["ticker"] for r in sorted((r for r in picks if r["as_of"] == latest), key=lambda r: r["rank"])]
 
+    # incremental refresh
+    def price_marks(self, symbols):
+        out = {}
+        for (t, d), r in self.prices.items():
+            if t not in symbols:
+                continue
+            m = out.setdefault(t, {"first": d, "last": d, "adj_close": r.get("adj_close")})
+            m["first"] = min(m["first"], d)
+            if d >= m["last"]:
+                m["last"], m["adj_close"] = d, r.get("adj_close")
+        return out
+
+    def fundamentals_marks(self, symbols):
+        out = {}
+        for r in self.fundamentals:
+            if r["ticker"] in symbols:
+                m = out.setdefault(r["ticker"], {"first": r["filed"], "last": r["filed"]})
+                m["first"], m["last"] = min(m["first"], r["filed"]), max(m["last"], r["filed"])
+        return out
+
     def has_documents(self, ticker):
         return any(d["ticker"] == ticker for d in self.documents.values())
 

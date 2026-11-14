@@ -1,342 +1,507 @@
 # TI Agent — Trading Intelligence
 
-An agentic, retrieval-augmented AI that screens about 900 US stocks every week (the **S&P 500** large caps plus the **S&P MidCap 400**). For the **top 20** picks it produces a full **medium-term (1–3 months)** and **long-term (6–24 months)** analysis (thesis, bull and bear case, catalysts, valuation, risks), grounded in news, SEC filings, macro data and price history — built entirely on **free tools**, with a **quantum computing** research layer planned for portfolio optimization.
+An agentic, retrieval-augmented AI that screens about 900 US stocks every week (the **S&P 500** large caps plus the **S&P MidCap 400**). For the **top 20** picks it writes a **medium-term (1–3 months)** and a **long-term (6–24 months)** analysis: thesis, bull and bear case, catalysts, valuation and risks. Every analysis is grounded in news, SEC filings, macro data and price history, and every claim is cited.
+
+Everything runs on **your own laptop** with **free tools**: a local PostgreSQL + pgvector database, a local LLM (Ollama), and Windows scheduled tasks. A **quantum computing** research layer for portfolio optimisation is planned.
 
 > **Disclaimer:** TI Agent is a research and learning project. Its output is not financial advice. It never places trades. Use at your own risk.
 
 ---
 
-## Status (2026-11-11)
+## Contents
 
-| Part | State |
-|---|---|
-| P1 Foundations: daily ingestion and processing | Built. 2-year backfill loaded with 0 errors. Gate: 7 clean daily runs, earliest **2026-11-19** |
-| P2 Knowledge: quant engine, hybrid retrieval | Built. **Gate passed** (10/10 test queries relevant with rerank) |
-| Stock screen (S&P 500 + MidCap 400): momentum among quality companies, top 20 | Built. Runs in GitHub Actions on Fridays; the daily ingest and the weekly agent then work on the picks. **Not run yet**: start it once by hand (see below) |
-| P3 Agent: weekly LLM run | Built. **1 of 4** clean weekly runs done (5 tickers, 10 cited suggestions) |
-| App (Flutter: web, Android, iOS) | Code written. GitHub Actions will compile, test and publish the web version to GitHub Pages on the next push |
-| Django dashboard | Built. Local tool for the owner (pipeline status, computed features) |
-| P5 Quantum + evaluation | Not started |
+1. [How it works in one picture](#how-it-works-in-one-picture)
+2. [The phases](#the-phases)
+   - [Phase 1: Foundations (collect and store data)](#phase-1-foundations-collect-and-store-data)
+   - [Phase 2: Knowledge (numbers and search)](#phase-2-knowledge-numbers-and-search)
+   - [The weekly stock screen (choosing what to analyse)](#the-weekly-stock-screen-choosing-what-to-analyse)
+   - [Phase 3: Agent (the AI analyst)](#phase-3-agent-the-ai-analyst)
+   - [Phase 4: App (showing the results)](#phase-4-app-showing-the-results)
+   - [Phase 5: Quantum and evaluation (planned)](#phase-5-quantum-and-evaluation-planned)
+3. [Data lifecycle: first run, refreshes, retention](#data-lifecycle-first-run-refreshes-retention)
+4. [Setup](#setup)
+5. [Running it every week](#running-it-every-week)
+6. [Publishing the app (GitHub Pages + Cloudflare Tunnel)](#publishing-the-app-github-pages--cloudflare-tunnel)
+7. [Reference](#reference): dashboard, API, environment variables, repository layout, guardrails, documentation
 
-96 offline tests. Details: [docs/progress.md](docs/progress.md). Security review: [docs/security.md](docs/security.md).
+---
 
-## What it does
+## How it works in one picture
 
-1. **Screens** ~900 stocks weekly (S&P 500 large caps + S&P MidCap 400): momentum (12-1 month, vs S&P 500) among profitable, cash-generating companies, and keeps the top 20.
-2. **Collects** news, filings, macro series and prices for the picks every weekday.
-3. **Indexes** text into a vector store, tagged by ticker, date and source.
-4. **Reasons** with a local LLM agent that calls tools to gather evidence for each ticker.
-5. **Suggests** a structured, cited view per ticker: stance, thesis, risks, confidence.
-6. **Optimizes** a portfolio from the suggestions, benchmarking quantum (QAOA) against classical solvers *(planned, P5)*.
-7. **Delivers** results through one Flutter app (web, Android, iOS) and Telegram.
-8. **Evaluates** every past suggestion against real returns and a benchmark *(planned, P5)*.
-
-## Architecture
-
-```
-GitHub Actions (cloud, Fridays 23:30 UTC): stock screen
-  Wikipedia constituents · yfinance prices · SEC XBRL fundamentals (S&P 500 + MidCap 400, ~900)
-  → momentum among quality companies → top 20 → Supabase "screens"
-  → backfill news + filings for new picks
-
-GitHub Actions (cloud, weekdays 22:30 UTC): picks only
-  Finnhub · SEC EDGAR · FRED · yfinance
-  → clean, chunk, embed (MiniLM), score news (FinBERT)
-  → Supabase (Postgres + pgvector)
-
-Laptop (weekly, GPU)
-  AI Finance Agent (Ollama · Qwen3.5 4B)
-    tools: search_knowledge · get_features · get_prices · get_macro · save_suggestion
-  → Supabase "suggestions"
-
-Delivery
-  Flutter app: web (GitHub Pages) · Android · iOS
-    Supabase Auth + anon key, row-level security, invite-only
-  Telegram bot
-  Django dashboard (local, owner only)
-
-Planned (P5)
-  optimize_portfolio tool (classical vs QAOA) → "portfolio_runs"
-  monthly evaluation → "performance"
+```text
+                     ┌──────────────────────── your laptop ─────────────────────────┐
+ Wikipedia, yfinance │  Weekly screen (Sat 01:30)   ~900 stocks → top 20 picks       │
+ SEC EDGAR + XBRL    │  Daily refresh (weekdays)    new prices, news, filings, macro │
+ Finnhub, FRED  ───► │        │ chunk · embed (MiniLM) · score news (FinBERT)        │
+                     │        ▼                                                      │
+                     │  PostgreSQL 17 + pgvector  (Docker, 127.0.0.1:5433)           │
+                     │        ▲            │                                         │
+                     │        │            ▼                                         │
+                     │  AI agent (Sat 09:00)       Django: dashboard + /api/          │
+                     │  Ollama · Qwen3.5 4B        (run_api.cmd, 127.0.0.1:8001)      │
+                     └───────────────────────────────────│──────────────────────────┘
+                                                         │ Cloudflare Tunnel (HTTPS, /api/ only)
+                       Telegram digest                   ▼
+                                             Flutter app on GitHub Pages · Android APK
 ```
 
-Supabase is the single hand-off point: every module reads from and writes to it, so each part can be developed and replaced independently.
+The database is the single hand-off point. Every module reads from and writes to it through one file,
+[common/store.py](common/store.py), so each part can be developed, tested and replaced on its own. The
+tests swap the database for an in-memory fake ([tests/fakes.py](tests/fakes.py)) and need no network or keys.
 
-## Modules
+**Modules.** The code is split into ten modules (M1–M10). The phases below group them.
 
-| # | Module | Job | Runs on | State |
-|---|---|---|---|---|
-| M1 | Ingestion | Pull news, filings, XBRL fundamentals, prices, macro | GitHub Actions (daily) | Built |
-| M2 | Processing + embedding | Clean, chunk, tag, embed, sentiment | GitHub Actions (daily) | Built |
-| M3 | Knowledge store | Data, vectors, auth, row-level security | Supabase (cloud) | Built |
-| M4 | Quant engine | Indicators, ratios, sentiment aggregates; weekly S&P 500 screen | Laptop (FastAPI) + GitHub Actions (screen) | Built |
-| M5 | Retrieval | Hybrid search, date-filtered, rerank | Laptop | Built |
-| M6 | AI Finance Agent | Tool-calling LLM that writes suggestions | Laptop GPU (Ollama) | Built |
-| M7 | Portfolio + quantum | Classical vs QAOA allocation, quantum-kernel regime classifier | Laptop CPU (simulators) | Planned |
-| M8 | Orchestration | Weekly run, retries, alerts | Laptop (Task Scheduler) | Built |
-| M9 | Delivery | Website, app, Telegram | Laptop / cloud / phone | Website built; app written; Telegram not configured |
-| M10 | Evaluation | Score suggestions vs returns | GitHub Actions (monthly) | Planned |
+| # | Module | Folder | Phase |
+|---|---|---|---|
+| M1 | Ingestion | [ingestion/](ingestion/) | 1 |
+| M2 | Processing + embedding | [processing/](processing/) | 1 |
+| M3 | Knowledge store | [db/](db/), [common/store.py](common/store.py) | 1 |
+| M4 | Quant engine + weekly screen | [quant/](quant/) | 2 |
+| M5 | Retrieval | [retrieval/](retrieval/) | 2 |
+| M6 | AI finance agent | [agent/](agent/) | 3 |
+| M7 | Portfolio + quantum | `portfolio/` (planned) | 5 |
+| M8 | Orchestration | [orchestration/](orchestration/), `run_*.cmd` | 1–3 |
+| M9 | Delivery: Telegram, website, app | [delivery/](delivery/), [web/](web/), [app/](app/) | 3–4 |
+| M10 | Evaluation | `evaluation/` (planned) | 5 |
 
-## Tech stack (all free)
+---
 
-| Layer | Tools |
-|---|---|
-| Data | Finnhub (free tier), SEC EDGAR, FRED, yfinance |
-| Storage | Supabase free tier (Postgres, pgvector, auth) |
-| Embeddings and NLP | sentence-transformers `all-MiniLM-L6-v2`, cross-encoder `ms-marco-MiniLM-L-6-v2`, FinBERT |
-| LLM | Ollama + Qwen3.5 4B (Q4, text-only build, tool calling + thinking) |
-| Backend | Python, FastAPI, pandas, pydantic |
-| Website | Django 5.2, Chart.js |
-| App | Flutter, supabase_flutter, fl_chart |
-| Quantum (planned) | Qiskit, PennyLane (simulators) |
-| Orchestration | GitHub Actions, Windows Task Scheduler |
-| Notifications | Telegram bot |
+## The phases
 
-## Suggestion format
+Each phase has a **gate**: a measurable condition that must hold before the next phase builds on it.
 
-Every suggestion is validated JSON. `ticker` and `as_of` are set by code, never by the model; every
-`sources` entry must have come from a search in the same run, and every number must match a tool output.
+| Phase | What it delivers | Gate | Status (2026-11-14) |
+|---|---|---|---|
+| **P1 Foundations** | Data collected daily and stored locally | 7 consecutive daily runs without errors | Code done. Restarting on the local database: needs a fresh backfill |
+| **P2 Knowledge** | Computed features + hybrid search | Relevant passages for 10 test queries | **Passed** (10/10 with rerank) |
+| **Screen** | Top 20 of ~900 stocks each week | — | Code done; first full run pending |
+| **P3 Agent** | Weekly cited suggestions + Telegram | 4 weekly runs of valid, cited JSON | 1 of 4 |
+| **P4 App** | Flutter app (web, Android, iOS) | Invite-only testers for 2 weeks | Code done; needs the tunnel set up |
+| **P5 Quantum + evaluation** | QAOA portfolio, scoring of past suggestions | Quantum vs classical benchmark report | Not started |
+
+### Phase 1: Foundations (collect and store data)
+
+**Goal:** a reliable, point-in-time record of everything the analyst may look at: prices, company news,
+SEC filings, financial statements and macro data.
+
+**M1 Ingestion** ([ingestion/run.py](ingestion/run.py)) pulls five sources for each ticker. Each source and
+ticker is isolated: one failure is logged and the rest carry on.
+
+| Source | Module | What is stored | Notes |
+|---|---|---|---|
+| yfinance | [prices.py](ingestion/prices.py) | Daily OHLCV + adjusted close, plus the benchmark (`SPY`) | ~800 days on the first run, then only new days |
+| Finnhub | [finnhub.py](ingestion/finnhub.py) | News headline + summary (`documents`, `source='news'`) | Free tier: ~1 year of history, 60 calls/min |
+| SEC EDGAR | [edgar.py](ingestion/edgar.py) | Text of 10-K, 10-Q and 8-K filings (`source='filing'`) | Already-stored filings are skipped |
+| SEC XBRL | [fundamentals.py](ingestion/fundamentals.py) | Every financial fact as reported in each filing (`fundamentals`) | Lets the quant engine rebuild what was known on any date |
+| FRED | [fred.py](ingestion/fred.py) | 8 macro series (rates, CPI, unemployment, …) | Free API key |
+
+**M2 Processing** ([processing/run.py](processing/run.py)) turns new documents into searchable knowledge:
+
+1. **Chunking:** text is split at sentence boundaries into chunks of ≤ 180 words with 30 words of overlap.
+   This fits the 256-token limit of the embedding model. A news item stays one chunk.
+2. **Embedding:** `all-MiniLM-L6-v2` turns each chunk into a 384-number vector, prefixed with
+   `"AAPL 10-K: …"` so that passages from different companies stay apart.
+3. **Sentiment:** FinBERT scores each news item from −1 (negative) to +1 (positive).
+
+**M3 Knowledge store** ([db/schema.sql](db/schema.sql)) is a local **PostgreSQL 17 with pgvector**, run in
+Docker ([docker-compose.yml](docker-compose.yml)). Chunks have an HNSW vector index and a full-text
+(`tsvector`) index. Two SQL functions, `match_chunks` and `keyword_chunks`, do the searching.
+
+**The no-lookahead rule.** Everything carries the timestamp at which it became *public*: prices by
+trading day, filings by SEC acceptance time, XBRL facts by filing date, and macro values by observation
+date plus a release delay. Every read asks for data strictly **before** an `as_of` date. This prevents
+the system from "knowing the future" in backtests.
+
+**Run it:** `run_daily.cmd` (ingest + process). The first time, use `run_daily.cmd --days 730` for a
+two-year backfill.
+
+**Gate:** 7 consecutive daily runs with status `ok` in `ingestion_runs` (shown on the dashboard's
+`/status/` page).
+
+### Phase 2: Knowledge (numbers and search)
+
+**Goal:** give the analyst two kinds of evidence, **numbers computed by code** and **relevant passages
+found by search**, so the LLM never has to invent either.
+
+**M4 Quant engine** ([quant/](quant/)) computes, as of any date:
+
+- **Technicals** ([indicators.py](quant/indicators.py)): 1/3/6/12-month returns, 50- and 200-day averages,
+  RSI(14), MACD, volatility, max drawdown, distance from 52-week high/low, beta and relative strength vs `SPY`.
+- **Point-in-time fundamentals** ([fundamentals.py](quant/fundamentals.py)): quarterly figures derived from
+  as-reported SEC facts, trailing-twelve-month (TTM) revenue, earnings and free cash flow, year-on-year
+  growth, margins, P/E, FCF yield and debt-to-equity. Each figure uses only filings made before the as-of date.
+- **News sentiment** ([sentiment.py](quant/sentiment.py)): 7/30/90-day averages, trend and news-volume z-score.
+- **Macro** ([macro.py](quant/macro.py)): latest value of each series after its release delay, plus recent changes.
+
+**M5 Retrieval** ([retrieval/search.py](retrieval/search.py)) finds the passages that answer a question:
+
+1. **Vector search** (meaning) and **keyword search** (exact terms like "Blackwell" or "Item 1A") each return candidates.
+2. **Reciprocal Rank Fusion** merges the two lists without any tuning.
+3. An optional **cross-encoder rerank** re-scores the best candidates (this is what passed the gate).
+4. **Diversity:** at most 2 chunks per document, so one long 10-K can't fill every slot.
+5. Every hit carries a `chunk_<id>` **citation** that the agent must quote.
+
+Both are also available as a local HTTP API (see [Reference](#quant--retrieval-api)).
+
+**Gate:** `python -m retrieval.evaluate --rerank` runs 10 test queries. For each one it checks that the
+results have the right ticker and source, that none is dated after `as_of`, and that an expected keyword
+appears. **Passed 2026-11-11: 10/10.**
+
+### The weekly stock screen (choosing what to analyse)
+
+**Goal:** analyse the *most promising* stocks instead of a hand-picked list, within a laptop's budget.
+Running retrieval and the LLM on 900 stocks would take over 10 GPU-hours a week, so the pipeline filters
+in two stages:
+
+1. **Screen everything cheaply** ([orchestration/screen_run.py](orchestration/screen_run.py), [quant/screen.py](quant/screen.py)):
+   - The S&P 500 and S&P 400 member lists come from Wikipedia.
+   - Prices for every stock and SEC fundamentals for every company are updated (incrementally after the first run).
+   - **Quality filter:** latest quarter < 200 days old, TTM net margin > 0, TTM free cash flow > 0.
+   - **Momentum score** among the stocks that pass: 0.50·z(12-1-month return) + 0.25·z(6-month return vs SPY)
+     \+ 0.25·z(3-month return vs SPY) − 0.20·z(6-month volatility).
+   - Results go to `screens`, and the top 20 are marked `selected`.
+2. **Analyse only the picks.** A new pick gets two years of news and filings, which are then chunked, embedded
+   and scored. From then on, the daily refresh and the weekly agent work on the picks automatically.
+   `watchlist.txt` is used only before the first screen.
+3. **Clean up:** at the end of the screen, data no module reads any more is deleted
+   (see [Retention](#retention-only-useful-data-is-kept)).
+
+**Run it:** `run_screen.cmd`. The first run takes about 1.5–2 hours because it downloads about 4–5 GB from the SEC. Later runs
+download only what is new.
+
+### Phase 3: Agent (the AI analyst)
+
+**Goal:** for each pick, a structured, cited view for two horizons, written by a local LLM that
+gathers its own evidence.
+
+**M6 Agent** ([agent/](agent/)) runs **Qwen3.5 4B** in Ollama (a text-only build that fits a 6 GB GPU,
+made by [scripts/create_model.ps1](scripts/create_model.ps1)) with "thinking" switched on. For each ticker it
+loops (reason → call a tool → read the result) until both suggestions are saved:
+
+| Tool | Kind | What it returns |
+|---|---|---|
+| `search_knowledge` | read | Up to 6 cited passages from Phase 2 retrieval |
+| `get_features` | read | Technicals, fundamentals and sentiment from the quant engine |
+| `get_prices` | read | Weekly closes (≤ 52 weeks) |
+| `get_macro` | read | Macro snapshot |
+| `save_suggestion` | **write** (the only one) | Validates and stores a suggestion, or tells the model what to fix |
+
+**Guardrails enforced in code** (a small model doesn't reliably follow prompt rules):
+
+- `ticker` and `as_of` are filled in by code, and the model can't change them.
+- Every cited `chunk_<id>` must have come back from a search in the same conversation.
+- Every number in the text must match a value some tool returned.
+- At most 12 model turns and 16 tool calls per ticker. Every call is logged in `tool_calls`.
+- The stance is *relative to the S&P 500*: bullish means "expected to beat SPY".
+
+A saved suggestion looks like this (plus bull case, bear case, catalysts and valuation):
 
 ```json
 {
-  "ticker": "AAPL",
-  "horizon": "long",
-  "stance": "bullish",
+  "ticker": "AAPL", "horizon": "long", "stance": "bullish",
   "thesis": "Short explanation grounded in cited sources.",
   "risks": ["Risk one", "Risk two"],
   "sources": ["chunk_1842", "chunk_1907"],
-  "confidence": 0.62,
-  "as_of": "2026-11-11"
+  "confidence": 0.62, "as_of": "2026-11-14"
 }
 ```
 
-## Repository structure
+**M8 Weekly run** ([orchestration/weekly_run.py](orchestration/weekly_run.py)) opens an `agent_runs` row,
+analyses each pick (with one retry), and closes the run as `ok`, `partial` or `error`. **M9 Telegram**
+([delivery/telegram.py](delivery/telegram.py)) then sends a digest, or an alert if the run failed.
 
-```
-TI-Agent/
-├── .github/workflows/
-│   ├── ingest.yml          # M1 + M2 for the picks, weekdays
-│   ├── screen.yml          # stock screen (S&P 500 + MidCap 400), Fridays
-│   └── app.yml             # Flutter: test, web (GitHub Pages), APK
-├── common/                 # config, HTTP, Supabase store, logging
-├── ingestion/              # M1
-├── processing/             # M2
-├── db/                     # M3: schema.sql, rls.sql
-├── quant/                  # M4: features + FastAPI app
-├── retrieval/              # M5: hybrid search + evaluation queries
-├── agent/                  # M6: tools, agent loop, schema checks, prompts/
-├── orchestration/          # M8: weekly_run.py, screen_run.py
-├── delivery/               # M9: Telegram
-├── web/                    # M9: Django website (dashboard/, tiweb/)
-├── app/                    # M9: Flutter app
-├── scripts/                # setup, model build, task registration, smoke test
-├── docs/                   # progress, architecture, security, references
-├── tests/
-├── watchlist.txt
-├── .env.example
-└── README.md
-```
+**Run it:** double-click `run_weekly.cmd` (about 30 minutes for 20 picks). Close browsers first: the
+model needs about 5 GB of free memory.
 
-Planned for P5: `portfolio/` (M7) and `evaluation/` + `evaluate.yml` (M10).
+**Gate:** 4 weekly runs in which every suggestion is valid and cited.
 
-## Requirements
+### Phase 4: App (showing the results)
 
-- Windows/Linux/macOS, Python 3.11+
-- NVIDIA GPU with ≥ 6 GB VRAM for `qwen3.5:4b` (or `qwen3.5:2b` on smaller GPUs / CPU; `qwen3.5:9b` with ≥ 10 GB)
-- About 5 GB of free commit memory (RAM + page file) during the weekly run
-- Free accounts: GitHub, Supabase, Finnhub, FRED, Telegram (bot via BotFather)
-- Flutter SDK (only for the app)
+**Goal:** let invited people read the results on the web and on their phones.
 
-## Quickstart
+- **Flutter app** ([app/](app/)), one codebase for web, Android and iOS:
+  - **Home:** this week's picks in rank order, each with its daily figures and why it made the list.
+  - **Compare:** a sortable table of all picks.
+  - **Ticker pages:** a chart vs the S&P 500, suggestion history, and the cited passages.
+  - The web build is published on **GitHub Pages** by [.github/workflows/app.yml](.github/workflows/app.yml),
+    which also builds an Android APK.
+- **App API** ([web/dashboard/api.py](web/dashboard/api.py)): the app gets its data from a small read-only JSON
+  API served by the laptop and reached through a **Cloudflare Tunnel**
+  (see [Publishing the app](#publishing-the-app-github-pages--cloudflare-tunnel)). It has the same invite-only
+  accounts as the dashboard and signed 12-hour tokens. Logins are throttled, cross-origin access is limited to the
+  GitHub Pages site, and the API never exposes raw documents or error logs.
+- **Django dashboard** ([web/](web/)): the owner's local research view with pipeline status and the computed
+  features the agent saw.
+
+**Gate:** invite-only testers use the app for 2 weeks.
+
+### Phase 5: Quantum and evaluation (planned)
+
+- **M7 Portfolio + quantum:** turn the suggestions into portfolio weights and compare a classical
+  mean-variance optimiser against **QAOA** on a quantum simulator (Qiskit / PennyLane). Results go to `portfolio_runs`.
+- **M10 Evaluation:** score every past suggestion against what actually happened:
+  - hit rate at 1, 3 and 12 months
+  - excess return vs SPY
+  - calibration (higher confidence should mean a higher hit rate)
+  - citation faithfulness (claims match their sources)
+
+  Results go to `performance`.
+
+**Gate:** a report benchmarking quantum vs classical (objective value and runtime).
+
+---
+
+## Data lifecycle: first run, refreshes, retention
+
+### First run, then refreshes
+
+| Data | First run | Later runs |
+|---|---|---|
+| Prices | ~800 days per ticker | Only days after the last stored one (with a 1-week overlap). If a dividend or split has re-based the adjusted closes, that ticker is re-fetched in full |
+| Fundamentals (SEC XBRL) | ~4 years of filings | Only filings since the last stored one (30-day overlap for amendments) |
+| News | Up to 1 year for a new pick | The last few days (`--days`, default 5) |
+| Filings | 2 years for a new pick | New filings only (already-stored filings are skipped) |
+| Macro | ~120 days minimum | Same window, upserted |
+| Chunks, embeddings, sentiment | All new documents | Only documents not yet processed or scored |
+
+The logic is in [ingestion/refresh.py](ingestion/refresh.py). A ticker whose data is missing, too short or
+more than 30 days stale is backfilled automatically, so a laptop that was off for a while catches up by itself.
+
+### Retention: only useful data is kept
+
+At the end of every weekly screen, [orchestration/retention.py](orchestration/retention.py) deletes what no
+module reads any more. Each window matches the longest look-back of the code that reads that table:
+
+| Data | Kept for | Why |
+|---|---|---|
+| Prices | 800 days | Backfill window (the screen needs 420 days, features 400) |
+| Fundamentals | Filed in the last ~4 years | 2-year analysis + 2 years for year-ago TTM figures |
+| Macro | 600 days | 500-day look-back + release delays |
+| News | 400 days | Finnhub serves ~1 year; sentiment uses 91 days |
+| Filings | 800 days | 2-year backfill |
+| Screens | 400 days | History on the dashboard and in the app |
+| Tool-call and ingestion logs | 180 days | Debugging and audit |
+
+It also does the following:
+
+- **Documents and chunks** are deleted for tickers that aren't on the watchlist and haven't been picked in
+  the last 8 weeks. They're backfilled again if the stock comes back.
+- **Tickers** that left both indexes, aren't on the watchlist and were never suggested are removed.
+- **Full filing and news text** is cleared once it's been chunked and scored. The chunks keep everything the search uses.
+- **Chunks cited by any suggestion are never deleted**, so every citation keeps working.
+
+Run it by hand with `python -m orchestration.retention` (`--dry-run` shows the cut-off dates), or skip it
+for one screen with `run_screen.cmd --keep-old`.
+
+---
+
+## Setup
+
+**Requirements:**
+
+- Windows 10/11 (the pipeline is plain Python, so Linux and macOS work with the `python -m …` commands)
+- Python 3.11+ and Docker Desktop
+- An NVIDIA GPU with ≥ 6 GB VRAM for `qwen3.5:4b` (`qwen3.5:2b` works on smaller GPUs or CPU)
+- About 5 GB of free memory during the weekly run
+- Free accounts: Finnhub, FRED, Telegram (optional), and GitHub (for the app); Cloudflare too if you publish the app
+- Flutter SDK, only to build the app locally
 
 ```powershell
-# 1. Clone and install
+# 1. Clone and install (creates .venv, installs requirements, creates .env, builds the model)
 git clone https://github.com/nsskn982/TI-Agent.git
 cd TI-Agent
-python -m venv .venv
-.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt
+.\scripts\setup.ps1                 # -OllamaModel qwen3.5:2b for a smaller GPU; -SkipOllama for Python only
 
-# 2. Configure secrets
-copy .env.example .env          # fill in SUPABASE_URL, SUPABASE_SERVICE_KEY, FINNHUB_API_KEY, ...
+# 2. Fill in .env: FINNHUB_API_KEY, FRED_API_KEY, SEC_USER_AGENT ("Name email"), optional Telegram
 
-# 3. Create the database: run db/schema.sql, then db/rls.sql, in the Supabase SQL editor
-#    (both are safe to re-run; re-run them after pulling changes to db/)
+# 3. Start the database and create the schema (both safe to re-run)
+docker compose up -d                # PostgreSQL 17 + pgvector on 127.0.0.1:5433, data in a Docker volume
+.venv\Scripts\python -m common.db_init
 
-# 4. Build the local model
-.\scripts\create_model.ps1      # pulls qwen3.5:4b, builds the text-only trading-analyst (fits 6 GB)
+# 4. First load (the long one)
+run_screen.cmd                      # ~1.5-2 h: index members, prices, SEC fundamentals, top 20, backfill picks
+run_daily.cmd --days 730            # 2-year backfill of everything for the picks
 
-# 5. Load data. Before the first S&P 500 screen, watchlist.txt sets the tickers; afterwards the
-#    latest top-20 picks do (--tickers always overrides).
-python -m orchestration.screen_run    # stock screen: ~1.5 h the first time (also runs Fridays in Actions)
-python -m ingestion.run --days 730    # first run: ~2-year backfill
-python -m processing.run              # chunk, embed, score news
-python -m pytest -q                   # offline tests, no keys needed
-
-# 6. Check retrieval (Phase 2 gate)
-python -m retrieval.evaluate --rerank
+# 5. Check it
+.venv\Scripts\python -m pytest -q                   # offline tests, no keys or database needed
+.venv\Scripts\python -m retrieval.evaluate --rerank # Phase 2 gate
+run_weekly.cmd --tickers AAPL --no-telegram         # one-ticker agent smoke test
 ```
 
-Weekly agent run (Phase 3): double-click **`run_weekly.cmd`** in the repo folder. It starts Ollama if
-needed, analyses this week's top 20 picks (about 30 min), and logs to `logs\weekly_run.log`. It also takes
-options, e.g. `run_weekly.cmd --tickers AAPL --no-telegram`. Or, from a terminal:
+Recommended Ollama settings for 6 GB of VRAM (`setup.ps1` sets them): `OLLAMA_FLASH_ATTENTION=1`,
+`OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_CONTEXT_LENGTH=16384`. Keep `OLLAMA_HOST` at `127.0.0.1`.
+
+**Database notes:**
+
+- The container listens on **127.0.0.1 only**. Port 5433 is used so it doesn't clash with a native
+  PostgreSQL on 5432. To use another server, set `DATABASE_URL`; it needs the `vector` extension.
+- To change the password, set `POSTGRES_PASSWORD` *before* the first `docker compose up`, and update
+  `DATABASE_URL` to match.
+- Back up with `docker exec ti-agent-db pg_dump -U ti_agent ti_agent > backup.sql`.
+
+## Running it every week
+
+Register all three jobs once:
 
 ```powershell
-python -m orchestration.weekly_run --tickers AAPL --no-telegram   # smoke test, one ticker
-python -m orchestration.weekly_run                                # full watchlist
-.\scripts\register_weekly_task.ps1                                # every Saturday 09:00
+.\scripts\register_tasks.ps1        # -Unregister removes them; times are parameters
 ```
 
-Close memory-heavy apps (browsers) during the run: the model needs about 4.6 GB of Windows commit memory.
-
-Add the same secrets to **GitHub → Settings → Secrets and variables → Actions** so the daily workflow can run.
-
-### Windows setup script
-
-From PowerShell at the repository root, run:
-
-```powershell
-.\scripts\setup.ps1
-```
-
-The script creates `.venv`, installs `requirements.txt`, creates `.env` from `.env.example` without overwriting an existing file, configures the recommended Ollama user settings, and builds the model. Use `-OllamaModel qwen3.5:2b` for a smaller GPU or CPU, `-SkipOllama` to configure Python only, or `-SkipPython` to configure Ollama only.
-
-### Recommended Ollama settings (6 GB VRAM)
-
-```powershell
-setx OLLAMA_FLASH_ATTENTION 1
-setx OLLAMA_KV_CACHE_TYPE q8_0
-setx OLLAMA_CONTEXT_LENGTH 16384
-```
-
-Restart Ollama afterwards and check `ollama ps` shows `100% GPU`. Leave `OLLAMA_HOST` at its default
-(`127.0.0.1`); `0.0.0.0` would expose the model to everyone on your network.
-
-## Environment variables
-
-Set in `.env` (never commit it). The app's settings go in `app/config.json` instead.
-
-| Variable | Used by |
-|---|---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Ingestion, processing, agent, website (server-side only) |
-| `FINNHUB_API_KEY`, `FRED_API_KEY`, `SEC_USER_AGENT` | Ingestion (EDGAR requires a contact email in the user agent) |
-| `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_THINK` | Agent (defaults: `http://localhost:11434`, `trading-analyst`, `16384`, `true`) |
-| `BENCHMARK` | Quant engine (default `SPY`) |
-| `SCREEN_TOP_N` | Stock screen: how many picks get the full pipeline (default `20`) |
-| `SENTIMENT_MODEL` | Processing (default FinBERT) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Weekly digest and alerts |
-| `QUANT_API_TOKEN` | Local API: empty = answer this machine only |
-| `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_BEHIND_PROXY` | Website |
-| `CONTACT_LINKEDIN_URL`, `CONTACT_GITHUB_URL` | Website Contact links (empty hides the icon) |
-
-`app/config.json` (git-ignored) holds `SUPABASE_URL`, the **anon** key `SUPABASE_ANON_KEY`, `BENCHMARK`,
-`LINKEDIN_URL` and `GITHUB_URL`. Never put the service key in the app.
-
-## Roadmap
-
-| Phase | Scope | Gate | Status |
+| Task | When (local time) | Script | Does |
 |---|---|---|---|
-| P1 Foundations | Supabase schema, daily ingestion | 7 days of data without errors | In progress (earliest pass 2026-11-19) |
-| P2 Knowledge | Embeddings, quant engine, retrieval | Relevant chunks on 10 test queries | **Passed** |
-| P3 Agent | AI Finance Agent, weekly run, Telegram | 4 weekly runs of valid, cited JSON | 1 / 4 (after the first screen: top 20 picks, ~30 min) |
-| P4 App | Flutter app (web, Android, iOS) | Invite-only testers for 2 weeks | App written; web publish via GitHub Pages set up |
-| P5 Quantum + eval | QAOA, quantum kernel, scoring | Quantum vs classical benchmark report | Not started |
+| TI-Agent daily refresh | Weekdays 23:45 | `run_daily.cmd` | New prices, news, filings, fundamentals, macro → chunk, embed, score |
+| TI-Agent weekly screen | Saturday 01:30 | `run_screen.cmd` | Screen ~900 stocks → top 20, backfill new picks, retention |
+| TI-Agent weekly run | Saturday 09:00 | `run_weekly.cmd` | AI suggestions for the picks → Telegram digest |
 
-## Dashboard (Django, local)
+- Each script starts Docker Desktop and the database container if they aren't running.
+- Each script writes to `logs\` (`daily_run.log`, `screen_run.log`, `weekly_run.log`).
+- A run missed because the PC was off starts when it's next on.
+- The tasks run only while you're logged on.
 
-An owner's research dashboard in [web/](web/), run on your own machine. It reads from Supabase server-side (the service key
-never reaches the browser), and its own SQLite database holds only the logins.
+---
+
+## Publishing the app (GitHub Pages + Cloudflare Tunnel)
+
+The web app is a static site on GitHub Pages, but its data lives on your laptop. A page served over HTTPS
+can't call `http://localhost` or a home IP, so the laptop's API is published at an **HTTPS address through
+a Cloudflare Tunnel**. Only `/api/` is exposed, and only while the laptop and `run_api.cmd` are running.
+
+1. **Accounts for testers** (the same accounts as the dashboard; there is no public sign-up):
+   ```powershell
+   .venv\Scripts\python web\manage.py migrate
+   .venv\Scripts\python web\manage.py invite alice --email alice@example.com   # prints a one-time password
+   ```
+2. **Settings in `.env`:**
+   - `DJANGO_SECRET_KEY`: a long random value
+   - `DJANGO_ALLOWED_HOSTS`: add your tunnel hostname, e.g. `127.0.0.1,localhost,ti-agent.example.com`
+   - `APP_ALLOWED_ORIGINS`: `https://<github-user>.github.io`
+3. **Start the API:** `run_api.cmd`. It serves the site with waitress on `127.0.0.1:8001`, with production
+   settings.
+4. **Create the tunnel.** You need a free Cloudflare account and a domain on Cloudflare. Install
+   `cloudflared` (`winget install Cloudflare.cloudflared`), then:
+   ```powershell
+   cloudflared tunnel login
+   cloudflared tunnel create ti-agent
+   cloudflared tunnel route dns ti-agent ti-agent.example.com
+   ```
+   Then write `%USERPROFILE%\.cloudflared\config.yml`. The path rule keeps the dashboard and admin off the internet:
+   ```yaml
+   tunnel: ti-agent
+   credentials-file: C:\Users\<you>\.cloudflared\<tunnel-id>.json
+   ingress:
+     - hostname: ti-agent.example.com
+       path: ^/api/
+       service: http://127.0.0.1:8001
+     - service: http_status:404
+   ```
+   Finally, run `cloudflared tunnel run ti-agent`, or install it as a service with `cloudflared service install`.
+5. **Point the app at it.** In GitHub, go to *Settings → Secrets and variables → Actions → Variables* and add
+   `API_URL = https://ti-agent.example.com`. Set *Settings → Pages → Source* to *GitHub Actions*, then push to
+   `main`. The workflow tests the app, builds it, and publishes it to `https://<github-user>.github.io/TI-Agent/`.
+   The Android APK is attached to the workflow run.
+
+For local app development, run `flutter run -d chrome --dart-define-from-file=config.json` with
+[app/config.example.json](app/config.example.json) copied to `app/config.json`. It points at
+`http://127.0.0.1:8001`, so also add `http://localhost:<port>` to `APP_ALLOWED_ORIGINS`.
+
+---
+
+## Reference
+
+### Dashboard (Django, local)
 
 ```powershell
-python web/manage.py migrate                  # once: creates web/db.sqlite3 for users and sessions
-python web/manage.py invite alice --admin     # prints a one-time password; there is no public sign-up
-python web/manage.py runserver                # http://127.0.0.1:8000  (needs DJANGO_DEBUG=true in .env)
+.venv\Scripts\python web\manage.py runserver      # http://127.0.0.1:8000 (needs DJANGO_DEBUG=true in .env)
 ```
 
 | Page | Shows |
 |---|---|
-| `/` | A scroll story: an intro with this week's numbers, an at-a-glance grid, then one full-screen scene per ticker where its two views slide in as you scroll (marked **New** or **Changed from …** against the previous run), ending with a contact section |
-| `/t/<ticker>/` | 12-month price chart against the benchmark, the computed features the agent saw, suggestion history |
-| `/c/<chunk_id>/` | The exact passage a suggestion cites, with a link to the original SEC filing or article |
+| `/` | Scroll story of this week's picks: both views per ticker, marked **New** / **Changed from …** |
+| `/t/<ticker>/` | 12-month chart vs the benchmark, the features the agent saw, suggestion history |
+| `/c/<chunk_id>/` | The exact cited passage, with a link to the original filing or article |
 | `/status/` | Roadmap gates, agent runs, ingestion and processing runs |
 
-The **Contact** tab in the header (and the closing scene) links to LinkedIn and GitHub.
+### Quant + retrieval API
 
-Security:
-
-- **Logins:** throttled, and sessions last 12 hours.
-- **Scripts:** a strict Content-Security-Policy lets only the site's own scripts run.
-The dashboard runs on your own machine and isn't hosted; the Flutter app is what other people use.
-
-## App (Flutter): web, Android, iOS
-
-[app/](app/) is the client everyone else uses. After sign-in:
-
-- **Home:** this week's top 20 in rank order. Each pick shows its size (large/mid cap) and sector, plus the
-  figures a daily check needs: last close and day move, position vs its 50- and 200-day averages, distance
-  from its 52-week high, and P/E. Then come the screen's reasons (momentum, return vs the S&P 500,
-  volatility, net margin, free cash flow) and the AI's two views. Each view has a thesis, bull case, bear
-  case, valuation, catalysts to watch and risks, all cited.
-- **Compare:** all 20 picks in one table, sortable by any column (price, day/5-day/1-month move,
-  momentum, valuation, margins, growth, the AI's stances).
-- **Ticker page:** 12-month chart vs the S&P 500, history, and the cited passages.
-
-Prices refresh daily (weekday ingest), the picks and AI views weekly. It's research, not financial advice:
-no buy/sell price targets. One codebase for every platform:
-
-| Platform | Build | Delivery |
-|---|---|---|
-| Web | GitHub Actions ([app.yml](.github/workflows/app.yml)), on every push to `main` | GitHub Pages: `https://nsskn982.github.io/TI-Agent/` |
-| Android | Same workflow (or `flutter build apk`) | Run page → Artifacts → `ti-agent-apk` |
-| iOS | `flutter build ipa` on a Mac | TestFlight (Apple Developer account) |
-
-It reads Supabase directly with the anon key and Supabase Auth, under the policies in
-[db/rls.sql](db/rls.sql). It has no server of its own, so there's nothing to host except static files. The
-app refuses to start with a service key, and the workflow refuses to publish one. Setup:
-[app/README.md](app/README.md). **Turn off public sign-ups in Supabase first.**
-
-## Quant + retrieval API (M4, M5)
-
-`uvicorn quant.api:app --port 8000` (docs at <http://localhost:8000/docs>). It answers requests from this
-machine only, unless `QUANT_API_TOKEN` is set; then every request needs `Authorization: Bearer <token>`.
+`.venv\Scripts\uvicorn quant.api:app --port 8000` (docs at `/docs`). It answers only requests from this
+machine, unless `QUANT_API_TOKEN` is set; then each request needs `Authorization: Bearer <token>`.
 
 | Route | Returns |
 |---|---|
-| `GET /features/{ticker}?as_of=` | Technicals (returns, SMA, RSI, MACD, vol, drawdown, beta and relative strength vs `BENCHMARK`), point-in-time TTM fundamentals from SEC XBRL (growth, margins, P/E, FCF yield, D/E), FinBERT news-sentiment aggregates |
+| `GET /features/{ticker}?as_of=` | Technicals, point-in-time fundamentals, sentiment aggregates |
 | `GET /prices/{ticker}?as_of=&days=` | Daily bars |
-| `GET /macro?as_of=` | FRED snapshot with release lags applied (e.g. CPI counts ~45 days after its observation date) |
-| `GET /search?q=&ticker=&source=&as_of=&k=&rerank=` | Hybrid vector + keyword search (RRF), optional cross-encoder rerank, max 2 chunks per document, each hit with a `chunk_<id>` citation |
+| `GET /macro?as_of=` | FRED snapshot with release delays applied |
+| `GET /search?q=&ticker=&source=&as_of=&k=&rerank=` | Hybrid search, each hit with a `chunk_<id>` citation |
 
-Every route only sees data from strictly before `as_of`: prices before that day, filings and XBRL facts
-filed before it, news published before it.
+### App API (`run_api.cmd`)
 
-## Evaluation (planned, P5)
+| Route | Returns |
+|---|---|
+| `POST /api/login` | `{"token", "expires_in"}` for `{"username" or email, "password"}` (throttled) |
+| `GET /api/runs/latest[?before=<id>]` | Latest good agent run (without error text) |
+| `GET /api/runs/<id>/suggestions`, `GET /api/tickers/<t>/suggestions` | Suggestions |
+| `GET /api/prices?tickers=A,B&days=` | Daily closes (≤ 50 tickers, ≤ 800 days) |
+| `GET /api/citations?ids=` | Cited passages only, ≤ 20 per call |
+| `GET /api/screen/latest` | The latest screen with each pick's metrics |
 
-- **Hit rate** at 1, 3 and 12 months
-- **Excess return** vs a benchmark index
-- **Calibration**: higher confidence should mean higher hit rate
-- **Citation faithfulness**: claims match their cited sources
-- **Quantum benchmark**: QAOA vs classical objective value and runtime
+### Environment variables (`.env`, never committed)
 
-## Guardrails
+| Variable | Used by |
+|---|---|
+| `DATABASE_URL`, `POSTGRES_PASSWORD` | Everything (default `postgresql://ti_agent:ti_agent@127.0.0.1:5433/ti_agent`) |
+| `FINNHUB_API_KEY`, `FRED_API_KEY`, `SEC_USER_AGENT` | Ingestion (EDGAR needs a contact email in the user agent) |
+| `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_THINK` | Agent |
+| `BENCHMARK`, `SCREEN_TOP_N`, `SENTIMENT_MODEL`, `EMBED_MODEL`, `MAX_FILING_CHARS`, `WATCHLIST` | Pipeline tuning |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Weekly digest and alerts |
+| `QUANT_API_TOKEN` | Quant API: empty = this machine only |
+| `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_BEHIND_PROXY` | Website and app API |
+| `APP_ALLOWED_ORIGINS` | Browser origins allowed to call `/api/` (the GitHub Pages site) |
+| `CONTACT_LINKEDIN_URL`, `CONTACT_GITHUB_URL` | Contact links on the website |
 
-- Retrieval is always filtered to data published before the as-of date (no lookahead).
-- The agent has read-only tools plus one write tool (`save_suggestion`); it cannot trade.
-- Citations must come from the same run; numbers must match tool outputs; theses must be in English.
-- Agent runs are capped at a fixed number of tool steps and every tool call is logged.
-- The website and app are private and invite-only; publishing investment recommendations publicly may fall under EU market rules (MAR).
+The app's build settings (`API_URL`, `BENCHMARK`, `LINKEDIN_URL`, `GITHUB_URL`) go in `app/config.json`
+locally, or in repository variables for CI. They're all public; the app holds no keys.
 
-## Documentation
+### Repository layout
 
-- [docs/progress.md](docs/progress.md): current status of every phase, the website and the app; next steps; known limitations
+```
+TI-Agent/
+├── common/          config, HTTP, database store (store.py), schema setup (db_init.py), logging
+├── db/              schema.sql: tables, indexes, search functions (M3)
+├── ingestion/       M1 sources + refresh.py (incremental updates)
+├── processing/      M2 chunking, embeddings, FinBERT
+├── quant/           M4 features, weekly screen, FastAPI app
+├── retrieval/       M5 hybrid search + evaluation queries
+├── agent/           M6 tools, agent loop, schema checks, prompts
+├── orchestration/   M8 weekly_run.py, screen_run.py, retention.py
+├── delivery/        M9 Telegram
+├── web/             M9 Django dashboard + app API (dashboard/api.py)
+├── app/             M9 Flutter app
+├── scripts/         setup, model build, task registration, database start-up, smoke test
+├── docs/            progress, architecture, security, references
+├── tests/           offline tests (in-memory fakes)
+├── docker-compose.yml               local PostgreSQL + pgvector
+├── run_daily.cmd · run_screen.cmd · run_weekly.cmd · run_api.cmd
+└── watchlist.txt                    tickers used before the first screen
+```
+
+### Guardrails
+
+- **No lookahead:** every read is limited to data published before the as-of date.
+- **Code-enforced agent rules:** the agent can't trade; its only write is a validated suggestion. Citations
+  must come from the same run, and numbers must match tool outputs.
+- **Database:** listens on 127.0.0.1 only; nothing outside the laptop can reach it.
+- **Invite-only:** the dashboard and app have no public sign-up. Publishing investment recommendations publicly
+  may fall under EU market rules (MAR).
+
+### Documentation
+
+- [docs/progress.md](docs/progress.md): detailed status, run history, known limitations
 - [docs/architecture.md](docs/architecture.md): how each module works and why, with citations
-- [docs/security.md](docs/security.md): threat model, security review findings and fixes, setup steps you must do
-- [docs/references.md](docs/references.md) ([BibTeX](docs/references.bib)): research the design builds on
-- [app/README.md](app/README.md): Flutter app setup
+- [docs/security.md](docs/security.md): threat model and security review
+- [docs/references.md](docs/references.md) ([BibTeX](docs/references.bib)): the 22 papers the design builds on
+- [app/README.md](app/README.md): Flutter app development
 
-## Key references
-
-The design builds on these papers; the full list of 22 arXiv papers is in [docs/references.md](docs/references.md).
+### Key references
 
 - Lewis et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, 2020. [arXiv:2005.11401](https://arxiv.org/abs/2005.11401)
 - Glasserman & Lin, *Assessing Look-Ahead Bias in Stock Return Predictions Generated By GPT Sentiment Analysis*, 2023. [arXiv:2309.17322](https://arxiv.org/abs/2309.17322)

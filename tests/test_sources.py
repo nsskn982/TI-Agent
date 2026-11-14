@@ -47,6 +47,8 @@ def test_edgar_published_at_falls_back_to_end_of_day():
 
 
 class _Resp:
+    encoding = "utf-8"
+
     def __init__(self, payload=None, text=""):
         self._payload, self.text = payload, text
 
@@ -55,6 +57,17 @@ class _Resp:
 
     def raise_for_status(self):
         pass
+
+    def iter_content(self, size):
+        data = self.text.encode()
+        for i in range(0, len(data), size):
+            yield data[i:i + size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
 class _Session:
@@ -103,3 +116,13 @@ def test_prices_frame_to_rows():
     rows = prices.frame_to_rows("AAPL", df)
     assert rows == [{"ticker": "AAPL", "date": "2024-11-07", "open": 1.0, "high": 1.5, "low": 0.5,
                      "close": 1.2, "adj_close": 1.1, "volume": 100}]
+
+
+def test_edgar_huge_document_is_read_in_part(monkeypatch):
+    monkeypatch.setattr(edgar.time, "sleep", lambda s: None)
+    html = "<html><body>" + "<p>Revenue grew.</p>" * 20000 + "</body></html>"
+    text, cut = edgar._get_text_capped(type("S", (), {"get": lambda self, u, **k: _Resp(text=html)})(), "u",
+                                       max_bytes=10_000)
+    assert cut and len(text) == 10_000
+    text, cut = edgar._get_text_capped(type("S", (), {"get": lambda self, u, **k: _Resp(text="<p>x</p>")})(), "u")
+    assert not cut and text == "<p>x</p>"

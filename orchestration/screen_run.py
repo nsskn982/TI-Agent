@@ -1,16 +1,18 @@
-"""Weekly screen of the S&P 500 + S&P MidCap 400 (GitHub Actions, Friday night, before the
+"""Weekly screen of the S&P 500 + S&P MidCap 400 (Windows scheduled task, Friday night, before the
 weekly agent run).
 
     python -m orchestration.screen_run                    # refresh universe + data, screen, backfill picks
-    python -m orchestration.screen_run --skip-refresh     # re-screen from data already in Supabase
+    python -m orchestration.screen_run --skip-refresh     # re-screen from data already in the database
     python -m orchestration.screen_run --top-n 20 --as-of 2026-11-14
 
 Steps:
   1. S&P 500 + S&P 400 constituents (Wikipedia) -> tickers (in_sp500 / in_sp400, sector, CIK)
-  2. ~800 days of prices for every constituent + the benchmark (batched yfinance download)
+  2. prices for every constituent + the benchmark (batched yfinance download): ~800 days on the
+     first run, only new days afterwards
   3. SEC XBRL fundamentals for every constituent
   4. screen: momentum among quality companies -> `screens`, top N marked `selected`
   5. picks with no documents yet get a news + filings backfill, then chunk/embed/sentiment
+  6. retention: delete data no module reads any more (orchestration/retention.py)
 
 The daily ingest and the weekly agent run then work on the selected picks only.
 """
@@ -25,7 +27,7 @@ from datetime import date, datetime, timedelta, timezone
 from common import logging_setup
 from common.config import benchmark, env_int, require
 from common.http import make_session
-from ingestion import edgar, fundamentals, prices, universe
+from ingestion import edgar, fundamentals, prices, refresh, universe
 from ingestion.run import FUNDAMENTALS_EXTRA_DAYS, PRICE_HISTORY_DAYS
 from quant.screen import run_screen
 
@@ -70,8 +72,22 @@ def refresh_data(store, symbols: list[str], ciks: dict[str, int], counts: Counte
     today = date.today()
     bench = benchmark()
     store.upsert_tickers([{"symbol": bench}])
-    got = prices.fetch_many(symbols + [bench], today - timedelta(days=PRICE_HISTORY_DAYS))
-    for s in symbols + [bench]:
+    full_since = today - timedelta(days=PRICE_HISTORY_DAYS)
+    everyone = symbols + [bench]
+    stored = refresh.marks(store, "price_marks", everyone)
+    starts = {s: refresh.price_since(stored.get(s), full_since, today) for s in everyone}
+    backfill = [s for s in everyone if starts[s] == full_since]
+    update = [s for s in everyone if starts[s] != full_since]
+    got = prices.fetch_many(backfill, full_since) if backfill else {}
+    if update:
+        recent = prices.fetch_many(update, min(starts[s] for s in update))
+        rebased = [s for s in update if refresh.rebased(stored.get(s), recent.get(s) or [])]
+        got.update(recent)
+        if rebased:
+            log.info("Re-fetching full history for %d re-based tickers (dividends/splits)", len(rebased))
+            got.update(prices.fetch_many(rebased, full_since))
+        counts["prices_full"], counts["prices_incremental"] = len(backfill) + len(rebased), len(update) - len(rebased)
+    for s in everyone:
         rows = got.get(s)
         if not rows:
             errors.append({"source": "prices", "key": s, "error": "no price rows"})
@@ -86,13 +102,14 @@ def refresh_data(store, symbols: list[str], ciks: dict[str, int], counts: Counte
         sec_map = {}
         log.warning("SEC ticker map unavailable (%s); using Wikipedia CIKs", exc)
     filed_since = today - timedelta(days=BACKFILL_DAYS + FUNDAMENTALS_EXTRA_DAYS)
+    filed = refresh.marks(store, "fundamentals_marks", symbols)
     for s in symbols:
         cik = (sec_map.get(s) or {}).get("cik") or ciks.get(s)
         if not cik:
             errors.append({"source": "fundamentals", "key": s, "error": "no CIK"})
             continue
         try:
-            rows = fundamentals.fetch_fundamentals(session, s, cik, filed_since)
+            rows = fundamentals.fetch_fundamentals(session, s, cik, refresh.filed_since(filed.get(s), filed_since))
             store.upsert_fundamentals(rows)
             counts["fundamentals"] += len(rows)
         except Exception as exc:
@@ -133,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top-n", type=int, default=env_int("SCREEN_TOP_N", 20))
     p.add_argument("--skip-refresh", action="store_true", help="Don't download; screen stored data")
     p.add_argument("--no-backfill", action="store_true")
+    p.add_argument("--keep-old", action="store_true", help="Skip the retention step (keep old data)")
     args = p.parse_args(argv)
 
     from common.store import Store
@@ -162,6 +180,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if picks and not args.no_backfill:
         backfill_picks(store, picks, counts, errors)
+
+    if not args.keep_old:
+        from orchestration.retention import prune
+
+        try:
+            counts.update({f"pruned_{k}": v for k, v in prune(store).items() if v})
+        except Exception as exc:
+            errors.append({"source": "retention", "key": "prune", "error": f"{type(exc).__name__}: {exc}"[:300]})
 
     status = "ok" if not errors else ("error" if not picks else "partial")
     store.log_run({

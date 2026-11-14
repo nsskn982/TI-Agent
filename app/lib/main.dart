@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
 import 'data.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'session.dart';
 import 'theme.dart';
 
 Future<void> main() async {
@@ -14,12 +14,15 @@ Future<void> main() async {
     runApp(_ConfigError(problem));
     return;
   }
-  await Supabase.initialize(url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
-  runApp(const TiApp());
+  final session = Session(AppConfig.apiUrl);
+  await session.restore();
+  runApp(TiApp(session: session));
 }
 
 class TiApp extends StatelessWidget {
-  const TiApp({super.key});
+  const TiApp({super.key, required this.session});
+
+  final Session session;
 
   @override
   Widget build(BuildContext context) {
@@ -28,23 +31,24 @@ class TiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
-      home: const AuthGate(),
+      home: AuthGate(session: session),
     );
   }
 }
 
-/// Shows the login screen until there is a Supabase session, then the suggestions.
+/// Shows the login screen until there is a valid token, then the suggestions.
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+  const AuthGate({super.key, required this.session});
+
+  final Session session;
 
   @override
   Widget build(BuildContext context) {
-    final client = Supabase.instance.client;
-    return StreamBuilder<AuthState>(
-      stream: client.auth.onAuthStateChange,
+    return ListenableBuilder(
+      listenable: session,
       builder: (context, _) {
-        if (client.auth.currentSession == null) return const LoginScreen();
-        return HomeScreen(data: SupabaseDataSource(client), onSignOut: () => client.auth.signOut());
+        if (!session.signedIn) return LoginScreen(session: session);
+        return HomeScreen(data: ApiDataSource(session), onSignOut: session.signOut);
       },
     );
   }

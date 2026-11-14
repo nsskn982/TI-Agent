@@ -50,6 +50,11 @@ def build_chunks(doc: dict, embedder) -> list[dict]:
     ]
 
 
+def out_of_memory(exc: BaseException) -> bool:
+    """The machine ran out of memory (not this document's fault): stop instead of marking it failed."""
+    return isinstance(exc, MemoryError) or getattr(exc, "winerror", None) == 1455 or "paging file is too small" in str(exc)
+
+
 def process(store, embedder, max_docs: int | None = None, batch_size: int = 25) -> dict:
     stats = {"documents": 0, "chunks": 0, "failed": 0, "errors": []}
     while max_docs is None or stats["documents"] + stats["failed"] < max_docs:
@@ -65,6 +70,10 @@ def process(store, embedder, max_docs: int | None = None, batch_size: int = 25) 
                 stats["documents"] += 1
                 stats["chunks"] += len(rows)
             except Exception as exc:
+                if out_of_memory(exc):
+                    log.error("Out of memory: stopping processing (documents stay queued). Close apps or "
+                              "enlarge the Windows page file, then run again.")
+                    raise
                 log.exception("Document %s failed", doc.get("id"))
                 msg = f"{type(exc).__name__}: {exc}"
                 store.mark_failed(doc["id"], msg)

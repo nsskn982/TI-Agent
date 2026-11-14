@@ -1,6 +1,5 @@
 {
-  "SUPABASE_URL": "https://<project-ref>.supabase.co",
-  "SUPABASE_ANON_KEY": "<anon / publishable key - NEVER the service_role or secret key>",
+  "API_URL": "http://127.0.0.1:8001",
   "BENCHMARK": "SPY",
   "LINKEDIN_URL": "",
   "GITHUB_URL": "https://github.com/nsskn982"

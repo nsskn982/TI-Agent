@@ -8,5 +8,5 @@ build/
 .flutter-plugins-dependencies
 *.iml
 .idea/
-# Local configuration: Supabase URL and anon key (see config.example.json)
+# Local configuration: API_URL etc. (see config.example.json)
 config.json

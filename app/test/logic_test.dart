@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ti_agent/config.dart';
 import 'package:ti_agent/data.dart';
@@ -9,19 +7,16 @@ import 'package:ti_agent/widgets/contact.dart';
 
 import 'fake_data.dart';
 
-String _jwt(Map<String, dynamic> payload) =>
-    'e30.${base64Url.encode(utf8.encode(jsonEncode(payload))).replaceAll('=', '')}.sig';
-
 void main() {
   group('config', () {
-    test('refuses a service_role JWT or secret key, accepts the anon key', () {
-      const url = 'https://abc.supabase.co';
-      expect(AppConfig.checkKey(url, _jwt({'role': 'service_role'})), contains('secret key'));
-      expect(AppConfig.checkKey(url, 'sb_secret_abc123'), contains('secret key'));
-      expect(AppConfig.checkKey(url, _jwt({'role': 'anon'})), isNull);
-      expect(AppConfig.checkKey(url, 'sb_publishable_abc123'), isNull);
-      expect(AppConfig.checkKey('', 'x'), contains('Missing'));
-      expect(AppConfig.checkKey('http://abc.supabase.co', 'x'), contains('https'));
+    test('API URL must be https (plain http only for a local dev server)', () {
+      expect(AppConfig.checkApiUrl('https://ti-agent.example.com'), isNull);
+      expect(AppConfig.checkApiUrl('http://localhost:8000'), isNull);
+      expect(AppConfig.checkApiUrl('http://127.0.0.1:8001'), isNull);
+      expect(AppConfig.checkApiUrl('http://ti-agent.example.com'), contains('https'));
+      expect(AppConfig.checkApiUrl('https://user:pw@ti-agent.example.com'), contains('password'));
+      expect(AppConfig.checkApiUrl(''), contains('Missing'));
+      expect(AppConfig.checkApiUrl('not a url'), isNotNull);
     });
   });
 

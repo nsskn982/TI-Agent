@@ -3,6 +3,22 @@
 *Status as of 2026-11-11.* For how the parts work, see [architecture.md](architecture.md); for the
 threat model and the security review, see [security.md](security.md).
 
+## 2026-11-14: moved from Supabase to a local PostgreSQL
+
+- **Database:** Supabase is gone. Everything runs against PostgreSQL 17 + pgvector in Docker
+  (`127.0.0.1:5433`), through the same [common/store.py](../common/store.py) interface (now psycopg 3).
+  `db/rls.sql` was Supabase-specific and has been removed. **The data in Supabase was not migrated**: run
+  the first load again (README → Setup, step 4). That resets the Phase 1 gate count.
+- **Schedules:** the GitHub Actions daily ingest and Friday screen can't reach a local database. They're
+  replaced by Windows scheduled tasks ([scripts/register_tasks.ps1](../scripts/register_tasks.ps1)): daily
+  refresh, weekly screen, weekly AI run.
+- **Refresh and retention:** after the first backfill only new data is downloaded
+  ([ingestion/refresh.py](../ingestion/refresh.py)); the weekly screen then deletes data no module reads any
+  more ([orchestration/retention.py](../orchestration/retention.py)).
+- **App:** still on GitHub Pages. It now reads an invite-only JSON API on the laptop
+  ([web/dashboard/api.py](../web/dashboard/api.py), `run_api.cmd`), reached through a Cloudflare Tunnel.
+  The sections below that mention Supabase, `db/rls.sql` or the cloud workflows describe the old setup.
+
 ## Summary
 
 | Phase | What it covers | Code | Gate | Gate status |
@@ -11,7 +27,7 @@ threat model and the security review, see [security.md](security.md).
 | P2 Knowledge | Quant engine, hybrid retrieval (M4–M5) | Done | Relevant chunks on 10 test queries | **Passed 2026-11-11.** 10/10 automatic checks; 10/10 on-topic by manual review with rerank |
 | P3 Agent | Agent, weekly run, Telegram (M6, M8, M9) | Done | 4 weekly runs of valid, cited JSON | **1 / 4.** Run #2 was `ok` for all 5 tickers |
 | Web | Django dashboard (M9 web) | Done | — | Running locally against live data |
-| App | Flutter client | Code written, not yet built | — | Needs the Flutter SDK and `db/rls.sql` re-run (see below) |
+| App | Flutter client | Analyzed and tested locally (19 tests) | — | Needs the Cloudflare Tunnel and the `API_URL` variable (see README) |
 | P5 Research | QAOA portfolio, M10 evaluation | Not started | — | — |
 
 **Tests:** 95 Python tests, all passing offline (no network or keys needed).
@@ -23,16 +39,16 @@ threat model and the security review, see [security.md](security.md).
 
 | Area | Where | Notes |
 |---|---|---|
-| Database schema, RLS, grants | [db/schema.sql](../db/schema.sql), [db/rls.sql](../db/rls.sql) | Safe to re-run. Signed-in users read results only; raw data and writes need the service key |
+| Database schema | [db/schema.sql](../db/schema.sql), [docker-compose.yml](../docker-compose.yml) | Local PostgreSQL 17 + pgvector; `python -m common.db_init` is safe to re-run |
 | Ingestion: prices, news, filings, XBRL, macro | [ingestion/](../ingestion/) | Point-in-time: filings by EDGAR acceptance time, XBRL by `filed`, FRED with release lags |
 | Processing: chunking, MiniLM embeddings, FinBERT | [processing/](../processing/) | 9,627 chunks, 1,240 scored news items |
 | Quant features and local API | [quant/](../quant/) | API answers local requests only unless `QUANT_API_TOKEN` is set |
 | Hybrid retrieval with rerank | [retrieval/](../retrieval/) | Dense + keyword, RRF, cross-encoder, ≤ 2 chunks per document |
 | Agent (Qwen3.5 4B via Ollama) | [agent/](../agent/) | Citations and numbers checked in code; English-only theses; caps on steps and tool calls |
 | Weekly run + Telegram | [orchestration/](../orchestration/), [delivery/](../delivery/) | Status `ok` / `partial` / `error`; Telegram not configured yet |
-| Daily ingest job | [.github/workflows/ingest.yml](../.github/workflows/ingest.yml) | 22:30 UTC weekdays; read-only token; validated manual inputs |
+| Daily refresh | [run_daily.cmd](../run_daily.cmd), [scripts/register_tasks.ps1](../scripts/register_tasks.ps1) | Weekdays 23:45 local; new data only after the first run |
 | Website | [web/](../web/) | Scroll-story home page, ticker charts, citations, pipeline status, Contact tab |
-| Flutter app | [app/](../app/) | Supabase Auth + anon key; see [app/README.md](../app/README.md) |
+| Flutter app | [app/](../app/) | Reads the laptop's `/api/` through a Cloudflare Tunnel; see [app/README.md](../app/README.md) |
 
 ## Data loaded (backfill, 2026-11-11)
 
@@ -72,7 +88,7 @@ found in any tool output) and corrected by the model.
 | Risk written partly in Chinese ("AI adoption不及预期") | **Fixed**: non-English text is rejected so the model rewrites it. The line already saved stays until the next run |
 | Real numbers under the wrong label (NVDA "$127B FCF yield" is FCF) | **Open.** Prompt glossary added; to be measured by M10 citation faithfulness |
 
-Gate query (Supabase SQL editor):
+Gate query (`docker exec -it ti-agent-db psql -U ti_agent`):
 
 ```sql
 select r.id, r.as_of, r.status, count(s.id) as suggestions,
@@ -83,8 +99,7 @@ group by r.id order by r.as_of desc limit 8;
 
 ## Website
 
-An invite-only Django site in [web/](../web/) that reads Supabase server-side (the service key never
-reaches the browser).
+An invite-only Django site in [web/](../web/) that reads the local database server-side.
 
 | Page | Shows |
 |---|---|
@@ -163,7 +178,7 @@ write-up columns), then `db/rls.sql` (lets the app read `screens`). Then start t
 2. Watch the daily job through 2026-11-19 for the Phase 1 gate.
 3. Three more weekly runs for the Phase 3 gate. Close heavy apps during the run (the model needs about
    4.6 GB of commit memory).
-4. Set up the Telegram bot (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) and `scripts/register_weekly_task.ps1`.
+4. Set up the Telegram bot (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) and `scripts/register_tasks.ps1`.
 5. Android APK for testers; computed features in a table the app can read; push notifications.
 6. Phase 5: QAOA portfolio experiment and the M10 evaluation (hit rate, calibration, citation faithfulness).
 

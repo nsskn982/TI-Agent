@@ -17,6 +17,9 @@ ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}"
 
 DEFAULT_FORMS = ("10-K", "10-Q", "8-K")
 MIN_INTERVAL_S = 0.15
+# A filing's main document can be hundreds of MB of inline-XBRL markup. Only the first
+# MAX_FILING_CHARS of *text* are kept, so read at most this many bytes of HTML.
+MAX_DOCUMENT_BYTES = 25_000_000
 
 
 def _get(session: requests.Session, url: str) -> requests.Response:
@@ -24,6 +27,23 @@ def _get(session: requests.Session, url: str) -> requests.Response:
     resp = session.get(url)
     resp.raise_for_status()
     return resp
+
+
+def _get_text_capped(session: requests.Session, url: str, max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[str, bool]:
+    """Download at most `max_bytes` (streamed, so a huge document never sits in memory).
+    Returns (text, cut_short)."""
+    time.sleep(MIN_INTERVAL_S)
+    with session.get(url, stream=True) as resp:
+        resp.raise_for_status()
+        buf, size, cut = [], 0, False
+        for chunk in resp.iter_content(1 << 16):
+            buf.append(chunk)
+            size += len(chunk)
+            if size >= max_bytes:
+                cut = True
+                break
+        raw = b"".join(buf)[:max_bytes]
+        return raw.decode(resp.encoding or "utf-8", errors="replace"), cut
 
 
 def load_cik_map(session: requests.Session) -> dict[str, dict]:
@@ -87,8 +107,12 @@ def fetch_filings(
         if skip_ids and source_id in skip_ids:
             continue
         url = ARCHIVE_URL.format(cik=cik, acc=f["accession"].replace("-", ""), doc=f["primary_document"])
-        text = html_to_text(_get(session, url).text)
-        truncated = len(text) > max_chars
+        html, cut = _get_text_capped(session, url)
+        if cut:
+            log.info("%s %s: document over %d MB, reading the first part only", symbol, f["accession"],
+                     MAX_DOCUMENT_BYTES // 1_000_000)
+        text = html_to_text(html)
+        truncated = cut or len(text) > max_chars
         docs.append(
             {
                 "ticker": symbol,
