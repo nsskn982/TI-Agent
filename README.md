@@ -21,7 +21,7 @@ Everything runs on **your own laptop** with **free tools**: a local PostgreSQL +
 3. [Data lifecycle: first run, refreshes, retention](#data-lifecycle-first-run-refreshes-retention)
 4. [Setup](#setup)
 5. [Running it every week](#running-it-every-week)
-6. [Publishing the app (GitHub Pages + Cloudflare Tunnel)](#publishing-the-app-github-pages--cloudflare-tunnel)
+6. [Publishing the app on GitHub Pages](#publishing-the-app-on-github-pages)
 7. [Reference](#reference): dashboard, API, environment variables, repository layout, guardrails, documentation
 
 ---
@@ -37,12 +37,14 @@ Everything runs on **your own laptop** with **free tools**: a local PostgreSQL +
                      │  PostgreSQL 17 + pgvector  (Docker, 127.0.0.1:5433)           │
                      │        ▲            │                                         │
                      │        │            ▼                                         │
-                     │  AI agent (Sat 09:00)       Django: dashboard + /api/          │
-                     │  Ollama · Qwen3.5 4B        (run_api.cmd, 127.0.0.1:8001)      │
-                     └───────────────────────────────────│──────────────────────────┘
-                                                         │ Cloudflare Tunnel (HTTPS, /api/ only)
-                       Telegram digest                   ▼
-                                             Flutter app on GitHub Pages · Android APK
+                     │  AI agent (Sat 09:00)       Django dashboard (local only)      │
+                     │  Ollama · Qwen3.5 4B                                          │
+                     │        │ after each run: export → site-data/data.json         │
+                     └────────│──────────── (AES-256-GCM, password-encrypted) ───────┘
+                              │ you push it
+                              ▼
+   Telegram digest      GitHub Pages: Flutter app + data/data.json → decrypted in the browser
+                                      with the password · Android APK
 ```
 
 The database is the single hand-off point. Every module reads from and writes to it through one file,
@@ -76,7 +78,7 @@ Each phase has a **gate**: a measurable condition that must hold before the next
 | **P2 Knowledge** | Computed features + hybrid search | Relevant passages for 10 test queries | **Passed** (10/10 with rerank) |
 | **Screen** | Top 20 of ~900 stocks each week | — | Code done; first full run pending |
 | **P3 Agent** | Weekly cited suggestions + Telegram | 4 weekly runs of valid, cited JSON | 1 of 4 |
-| **P4 App** | Flutter app (web, Android, iOS) | Invite-only testers for 2 weeks | Code done; needs the tunnel set up |
+| **P4 App** | Flutter app (web, Android, iOS) | Testers with the password for 2 weeks | Code and data export done; push to publish |
 | **P5 Quantum + evaluation** | QAOA portfolio, scoring of past suggestions | Quantum vs classical benchmark report | Not started |
 
 ### Phase 1: Foundations (collect and store data)
@@ -217,7 +219,7 @@ model needs about 5 GB of free memory.
 
 ### Phase 4: App (showing the results)
 
-**Goal:** let invited people read the results on the web and on their phones.
+**Goal:** let the people you choose read the results on the web and on their phones.
 
 - **Flutter app** ([app/](app/)), one codebase for web, Android and iOS:
   - **Home:** this week's picks in rank order, each with its daily figures and why it made the list.
@@ -225,15 +227,16 @@ model needs about 5 GB of free memory.
   - **Ticker pages:** a chart vs the S&P 500, suggestion history, and the cited passages.
   - The web build is published on **GitHub Pages** by [.github/workflows/app.yml](.github/workflows/app.yml),
     which also builds an Android APK.
-- **App API** ([web/dashboard/api.py](web/dashboard/api.py)): the app gets its data from a small read-only JSON
-  API served by the laptop and reached through a **Cloudflare Tunnel**
-  (see [Publishing the app](#publishing-the-app-github-pages--cloudflare-tunnel)). It has the same invite-only
-  accounts as the dashboard and signed 12-hour tokens. Logins are throttled, cross-origin access is limited to the
-  GitHub Pages site, and the API never exposes raw documents or error logs.
+- **Encrypted data file** ([orchestration/export_app.py](orchestration/export_app.py)): GitHub Pages hosts
+  only files, so after each run the laptop exports what the app shows into one file, `site-data/data.json`.
+  It is encrypted with a password you choose (AES-256-GCM, key from PBKDF2-SHA256). You push it, the
+  workflow publishes it beside the app, and the app decrypts it in the browser. The site needs no server,
+  tunnel or domain, and works while your laptop is off. See
+  [Publishing the app](#publishing-the-app-on-github-pages).
 - **Django dashboard** ([web/](web/)): the owner's local research view with pipeline status and the computed
   features the agent saw.
 
-**Gate:** invite-only testers use the app for 2 weeks.
+**Gate:** testers with the password use the app for 2 weeks.
 
 ### Phase 5: Quantum and evaluation (planned)
 
@@ -303,7 +306,7 @@ for one screen with `run_screen.cmd --keep-old`.
 - Python 3.11+ and Docker Desktop
 - An NVIDIA GPU with ≥ 6 GB VRAM for `qwen3.5:4b` (`qwen3.5:2b` works on smaller GPUs or CPU)
 - About 5 GB of free memory during the weekly run
-- Free accounts: Finnhub, FRED, Telegram (optional), and GitHub (for the app); Cloudflare too if you publish the app
+- Free accounts: Finnhub, FRED, Telegram (optional), and GitHub (for the app on GitHub Pages)
 - Flutter SDK, only to build the app locally
 
 ```powershell
@@ -341,7 +344,7 @@ Recommended Ollama settings for 6 GB of VRAM (`setup.ps1` sets them): `OLLAMA_FL
 
 ## Running it every week
 
-Register all three jobs once:
+Register the jobs once:
 
 ```powershell
 .\scripts\register_tasks.ps1        # -Unregister removes them; times are parameters
@@ -355,54 +358,41 @@ Register all three jobs once:
 
 - Each script starts Docker Desktop and the database container if they aren't running.
 - Each script writes to `logs\` (`daily_run.log`, `screen_run.log`, `weekly_run.log`).
+- Each script ends by updating the app's data file, `site-data/data.json`. **Push it** to publish the new data.
+- In a terminal each script shows its steps live; detailed log lines go to the log file.
 - A run missed because the PC was off starts when it's next on.
 - The tasks run only while you're logged on.
 
 ---
 
-## Publishing the app (GitHub Pages + Cloudflare Tunnel)
+## Publishing the app on GitHub Pages
 
-The web app is a static site on GitHub Pages, but its data lives on your laptop. A page served over HTTPS
-can't call `http://localhost` or a home IP, so the laptop's API is published at an **HTTPS address through
-a Cloudflare Tunnel**. Only `/api/` is exposed, and only while the laptop and `run_api.cmd` are running.
+GitHub Pages hosts only files, so the app can't reach the database on your laptop. Instead, every run
+exports what the app shows into one encrypted file, `site-data/data.json`: this week's picks, the AI views
+(and last week's, to mark what changed), a year of prices and the cited passages. You push it; the app on
+GitHub Pages downloads it and decrypts it in the browser with the password. Nothing runs online, and the
+app works while your laptop is off. It is as fresh as your last push.
 
-1. **Accounts for testers** (the same accounts as the dashboard; there is no public sign-up):
+1. **Choose the password.** `APP_DATA_PASSWORD` in `.env` (setup already put a random one there). Give it
+   only to the people who may read the app. Changing it re-encrypts the file at the next run, and everyone
+   has to enter the new one.
+2. **Export** (each run does this at the end; to do it by hand):
    ```powershell
-   .venv\Scripts\python web\manage.py migrate
-   .venv\Scripts\python web\manage.py invite alice --email alice@example.com   # prints a one-time password
+   .venv\Scripts\python -m orchestration.export_app           # writes site-data\data.json if anything changed
+   .venv\Scripts\python -m orchestration.export_app --check   # decrypts it and prints what's inside
    ```
-2. **Settings in `.env`:**
-   - `DJANGO_SECRET_KEY`: a long random value
-   - `DJANGO_ALLOWED_HOSTS`: add your tunnel hostname, e.g. `127.0.0.1,localhost,ti-agent.example.com`
-   - `APP_ALLOWED_ORIGINS`: `https://<github-user>.github.io`
-3. **Start the API:** `run_api.cmd`. It serves the site with waitress on `127.0.0.1:8001`, with production
-   settings.
-4. **Create the tunnel.** You need a free Cloudflare account and a domain on Cloudflare. Install
-   `cloudflared` (`winget install Cloudflare.cloudflared`), then:
-   ```powershell
-   cloudflared tunnel login
-   cloudflared tunnel create ti-agent
-   cloudflared tunnel route dns ti-agent ti-agent.example.com
-   ```
-   Then write `%USERPROFILE%\.cloudflared\config.yml`. The path rule keeps the dashboard and admin off the internet:
-   ```yaml
-   tunnel: ti-agent
-   credentials-file: C:\Users\<you>\.cloudflared\<tunnel-id>.json
-   ingress:
-     - hostname: ti-agent.example.com
-       path: ^/api/
-       service: http://127.0.0.1:8001
-     - service: http_status:404
-   ```
-   Finally, run `cloudflared tunnel run ti-agent`, or install it as a service with `cloudflared service install`.
-5. **Point the app at it.** In GitHub, go to *Settings → Secrets and variables → Actions → Variables* and add
-   `API_URL = https://ti-agent.example.com`. Set *Settings → Pages → Source* to *GitHub Actions*, then push to
-   `main`. The workflow tests the app, builds it, and publishes it to `https://<github-user>.github.io/TI-Agent/`.
-   The Android APK is attached to the workflow run.
+3. **Turn on GitHub Pages once:** *Settings → Pages → Source: GitHub Actions*.
+4. **Push** `site-data/data.json` (with your code, or on its own after a run). The *App (Flutter)* workflow
+   tests the app, builds it, puts the data file next to it and publishes `https://<github-user>.github.io/TI-Agent/`.
+   The Android APK is attached to the workflow run; it reads the same file from that address.
 
-For local app development, run `flutter run -d chrome --dart-define-from-file=config.json` with
-[app/config.example.json](app/config.example.json) copied to `app/config.json`. It points at
-`http://127.0.0.1:8001`, so also add `http://localhost:<port>` to `APP_ALLOWED_ORIGINS`.
+**About privacy.** A GitHub Pages site is public: anyone can download `data.json`, but without the password
+it is unreadable. Because anyone can try passwords on it offline, use a long random password (the default
+is 24 random characters) and don't reuse it elsewhere. The password never leaves the device: the app
+derives the key locally and remembers only the key, until the password changes.
+
+For local app development, copy [app/config.example.json](app/config.example.json) to `app/config.json`
+(it reads the published file) and run `flutter run -d chrome --dart-define-from-file=config.json`.
 
 ---
 
@@ -433,17 +423,6 @@ machine, unless `QUANT_API_TOKEN` is set; then each request needs `Authorization
 | `GET /macro?as_of=` | FRED snapshot with release delays applied |
 | `GET /search?q=&ticker=&source=&as_of=&k=&rerank=` | Hybrid search, each hit with a `chunk_<id>` citation |
 
-### App API (`run_api.cmd`)
-
-| Route | Returns |
-|---|---|
-| `POST /api/login` | `{"token", "expires_in"}` for `{"username" or email, "password"}` (throttled) |
-| `GET /api/runs/latest[?before=<id>]` | Latest good agent run (without error text) |
-| `GET /api/runs/<id>/suggestions`, `GET /api/tickers/<t>/suggestions` | Suggestions |
-| `GET /api/prices?tickers=A,B&days=` | Daily closes (≤ 50 tickers, ≤ 800 days) |
-| `GET /api/citations?ids=` | Cited passages only, ≤ 20 per call |
-| `GET /api/screen/latest` | The latest screen with each pick's metrics |
-
 ### Environment variables (`.env`, never committed)
 
 | Variable | Used by |
@@ -454,12 +433,12 @@ machine, unless `QUANT_API_TOKEN` is set; then each request needs `Authorization
 | `BENCHMARK`, `SCREEN_TOP_N`, `SENTIMENT_MODEL`, `EMBED_MODEL`, `MAX_FILING_CHARS`, `WATCHLIST` | Pipeline tuning |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Weekly digest and alerts |
 | `QUANT_API_TOKEN` | Quant API: empty = this machine only |
-| `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_BEHIND_PROXY` | Website and app API |
-| `APP_ALLOWED_ORIGINS` | Browser origins allowed to call `/api/` (the GitHub Pages site) |
+| `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_BEHIND_PROXY` | Website (local dashboard) |
+| `APP_DATA_PASSWORD` | Encrypts the app's data file (`site-data/data.json`) |
 | `CONTACT_LINKEDIN_URL`, `CONTACT_GITHUB_URL` | Contact links on the website |
 
-The app's build settings (`API_URL`, `BENCHMARK`, `LINKEDIN_URL`, `GITHUB_URL`) go in `app/config.json`
-locally, or in repository variables for CI. They're all public; the app holds no keys.
+The app's build settings (`DATA_URL`, `BENCHMARK`, `LINKEDIN_URL`, `GITHUB_URL`) go in `app/config.json`
+locally; CI writes them itself. They're all public; the app holds no keys or passwords.
 
 ### Repository layout
 
@@ -474,13 +453,14 @@ TI-Agent/
 ├── agent/           M6 tools, agent loop, schema checks, prompts
 ├── orchestration/   M8 weekly_run.py, screen_run.py, retention.py
 ├── delivery/        M9 Telegram
-├── web/             M9 Django dashboard + app API (dashboard/api.py)
+├── web/             M9 Django dashboard (local only)
 ├── app/             M9 Flutter app
 ├── scripts/         setup, model build, task registration, database start-up, smoke test
 ├── docs/            progress, architecture, security, references
 ├── tests/           offline tests (in-memory fakes)
 ├── docker-compose.yml               local PostgreSQL + pgvector
-├── run_daily.cmd · run_screen.cmd · run_weekly.cmd · run_api.cmd
+├── site-data/      the app's encrypted data file (data.json): push it to publish
+├── run_daily.cmd · run_screen.cmd · run_weekly.cmd
 └── watchlist.txt                    tickers used before the first screen
 ```
 

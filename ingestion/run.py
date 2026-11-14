@@ -15,7 +15,7 @@ import sys
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from common import logging_setup
+from common import logging_setup, progress
 from common.config import ROOT, benchmark, env, env_int, require
 from common.http import make_session
 from ingestion import edgar, finnhub, fred, fundamentals, prices, refresh
@@ -58,12 +58,14 @@ class Run:
 
     def write(self, kind: str, method: str, rows: list[dict]) -> None:
         self.counts[kind] += len(rows)
+        progress.add_rows(len(rows))
         if self.dry_run or not rows:
             return
         getattr(self.store, method)(rows)
 
     def fail(self, source: str, key: str, exc: Exception) -> None:
         log.error("%s %s failed: %s", source, key, exc)
+        progress.problem()
         self.errors.append({"source": source, "key": key, "error": f"{type(exc).__name__}: {exc}"[:500]})
 
 
@@ -103,7 +105,7 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
     if "prices" in sources:
         price_since = today - timedelta(days=max(days, PRICE_HISTORY_DAYS))
         stored = refresh.marks(store, "price_marks", price_tickers)
-        for t in price_tickers:
+        for t in progress.each("Prices", price_tickers):
             try:
                 since_t = refresh.price_since(stored.get(t), price_since, today)
                 rows = prices.fetch_prices(t, since_t)
@@ -125,7 +127,7 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
         else:
             # Finnhub free tier only serves ~1 year of company news.
             news_since = max(since, today - timedelta(days=365))
-            for t in tickers:
+            for t in progress.each("News", tickers):
                 try:
                     items = finnhub.fetch_company_news(session, t, news_since, today, token)
                     run.write("news", "insert_documents", finnhub.to_documents(t, items))
@@ -134,7 +136,7 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
 
     if "filings" in sources and edgar_session is not None:
         max_chars = env_int("MAX_FILING_CHARS", 300_000)
-        for t in tickers:
+        for t in progress.each("Filings", tickers):
             info = cik_map.get(t)
             if info is None:
                 log.warning("No CIK for %s (ETF or foreign issuer?) - skipping filings", t)
@@ -149,7 +151,7 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
     if "fundamentals" in sources and edgar_session is not None:
         filed_since = since - timedelta(days=FUNDAMENTALS_EXTRA_DAYS)
         stored = refresh.marks(store, "fundamentals_marks", tickers)
-        for t in tickers:
+        for t in progress.each("Fundamentals", tickers):
             info = cik_map.get(t)
             if info is None:
                 continue
@@ -169,7 +171,7 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
         else:
             # Monthly series need a longer window to always capture the latest print.
             macro_since = min(since, today - timedelta(days=120))
-            for series in fred.DEFAULT_SERIES:
+            for series in progress.each("Macro", fred.DEFAULT_SERIES):
                 try:
                     run.write("macro", "upsert_macro", fred.fetch_series(session, series, macro_since, key))
                 except Exception as exc:
@@ -206,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     log.info("Ingesting %s for %s (last %d days)", ",".join(args.sources), ",".join(tickers), args.days)
-    run = ingest(tickers, args.days, tuple(args.sources), store, args.dry_run)
+    with progress.workflow(f"Ingest {len(tickers)} tickers", [s.title() for s in SOURCES if s in args.sources]):
+        run = ingest(tickers, args.days, tuple(args.sources), store, args.dry_run)
 
     status = "ok" if not run.errors else ("error" if not sum(run.counts.values()) else "partial")
     log.info("Done: status=%s counts=%s errors=%d", status, dict(run.counts), len(run.errors))

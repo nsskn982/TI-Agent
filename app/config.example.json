@@ -1,5 +1,5 @@
 {
-  "API_URL": "http://127.0.0.1:8001",
+  "DATA_URL": "https://nsskn982.github.io/TI-Agent/data/data.json",
   "BENCHMARK": "SPY",
   "LINKEDIN_URL": "",
   "GITHUB_URL": "https://github.com/nsskn982"

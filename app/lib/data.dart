@@ -1,10 +1,7 @@
-import 'dart:convert';
-
 import 'models.dart';
-import 'session.dart';
 
-/// Everything the app reads. ApiDataSource reads the laptop's server as the signed-in
-/// user; tests use an in-memory fake.
+/// Everything the app reads. BundleDataSource reads the decrypted data file from GitHub
+/// Pages; tests use an in-memory fake.
 abstract class DataSource {
   Future<AgentRun?> latestRun();
   Future<AgentRun?> previousRun(int beforeId);
@@ -20,104 +17,72 @@ abstract class DataSource {
   Future<Map<String, Quote>> latestQuotes(List<String> tickers);
 }
 
-/// Reads the laptop's JSON API (web/dashboard/api.py) with the signed-in user's token.
-class ApiDataSource implements DataSource {
-  ApiDataSource(this.session);
+/// Reads the decrypted data file (see vault.dart and orchestration/export_app.py).
+class BundleDataSource implements DataSource {
+  BundleDataSource(this.d);
 
-  final Session session;
+  final Map<String, dynamic> d;
 
-  Future<Map<String, dynamic>> _get(String path, [Map<String, String>? query]) async {
-    final r = await session.client
-        .get(session.uri(path, query), headers: {'Authorization': 'Bearer ${session.token ?? ''}'});
-    if (r.statusCode == 401) {
-      await session.signOut(); // token expired or revoked: back to the login screen
-      throw const ApiException('Signed out. Please sign in again.');
-    }
-    if (r.statusCode != 200) throw ApiException('Server error (HTTP ${r.statusCode}).');
-    return Map<String, dynamic>.from(jsonDecode(r.body) as Map);
-  }
+  List<Map<String, dynamic>> _list(Object? v) =>
+      [for (final r in (v as List? ?? const [])) Map<String, dynamic>.from(r as Map)];
 
-  static List<Map<String, dynamic>> _rows(Map<String, dynamic> body) =>
-      [for (final r in (body['rows'] as List? ?? const [])) Map<String, dynamic>.from(r as Map)];
-
-  static AgentRun? _run(Map<String, dynamic> body) {
-    final run = body['run'];
-    return run == null ? null : AgentRun.fromJson(Map<String, dynamic>.from(run as Map));
-  }
+  List<AgentRun> get _runs => [for (final r in _list(d['runs'])) AgentRun.fromJson(r)];
 
   @override
-  Future<AgentRun?> latestRun() async => _run(await _get('/api/runs/latest'));
+  Future<AgentRun?> latestRun() async => _runs.isEmpty ? null : _runs.first;
 
   @override
-  Future<AgentRun?> previousRun(int beforeId) async => _run(await _get('/api/runs/latest', {'before': '$beforeId'}));
+  Future<AgentRun?> previousRun(int beforeId) async {
+    final older = _runs.where((r) => r.id < beforeId).toList()..sort((a, b) => b.id.compareTo(a.id));
+    return older.isEmpty ? null : older.first;
+  }
 
   @override
   Future<List<Suggestion>> suggestionsForRun(int runId) async =>
-      [for (final r in _rows(await _get('/api/runs/$runId/suggestions'))) Suggestion.fromJson(r)];
+      [for (final r in _list((d['suggestions'] as Map?)?['$runId'])) Suggestion.fromJson(r)];
 
   @override
-  Future<List<Suggestion>> tickerHistory(String ticker) async => [
-        for (final r in _rows(await _get('/api/tickers/${Uri.encodeComponent(ticker)}/suggestions')))
-          Suggestion.fromJson(r),
-      ];
+  Future<List<Suggestion>> tickerHistory(String ticker) async =>
+      [for (final r in _list((d['history'] as Map?)?[ticker])) Suggestion.fromJson(r)];
+
+  List<PricePoint> _prices(String ticker, int days) {
+    final since = DateTime.now().subtract(Duration(days: days)).toIso8601String().substring(0, 10);
+    final rows = (d['prices'] as Map?)?[ticker] as List? ?? const [];
+    return [
+      for (final r in rows)
+        if ((r as List)[0].toString().compareTo(since) >= 0)
+          if (PricePoint.fromJson({'date': r[0], 'close': r[1], 'adj_close': r[2]}) case final p?) p,
+    ];
+  }
 
   @override
-  Future<List<PricePoint>> prices(String ticker, {int days = 365}) async =>
-      _rows(await _get('/api/prices', {'tickers': ticker, 'days': '$days'}))
-          .map(PricePoint.fromJson)
-          .whereType<PricePoint>()
-          .toList();
+  Future<List<PricePoint>> prices(String ticker, {int days = 365}) async => _prices(ticker, days);
 
   @override
   Future<Map<int, Citation>> citations(List<int> ids) async {
-    final out = <int, Citation>{};
-    final unique = ids.toSet().toList();
-    // The API returns at most 20 rows per call, and only chunks some suggestion cites.
-    for (var i = 0; i < unique.length; i += 20) {
-      final batch = unique.sublist(i, i + 20 > unique.length ? unique.length : i + 20);
-      for (final r in _rows(await _get('/api/citations', {'ids': batch.join(',')}))) {
-        final c = Citation.fromJson(r);
-        out[c.id] = c;
-      }
-    }
-    return out;
+    final all = (d['citations'] as Map?) ?? const {};
+    return {
+      for (final id in ids.toSet())
+        if (all['$id'] != null) id: Citation.fromJson(Map<String, dynamic>.from(all['$id'] as Map)),
+    };
   }
 
   @override
-  Future<Map<String, Quote>> latestQuotes(List<String> tickers) async {
-    if (tickers.isEmpty) return {};
-    final rows = _rows(await _get('/api/prices', {'tickers': tickers.join(','), 'days': '16'}));
-    final by = <String, List<PricePoint>>{};
-    for (final r in rows) {
-      final p = PricePoint.fromJson(r);
-      if (p != null) (by[r['ticker'].toString()] ??= []).add(p);
-    }
-    return {for (final e in by.entries) if (Quote.fromSeries(e.value) case final q?) e.key: q};
-  }
+  Future<Map<String, Quote>> latestQuotes(List<String> tickers) async => {
+        for (final t in tickers)
+          if (Quote.fromSeries(_prices(t, 16)) case final q?) t: q,
+      };
 
   @override
   Future<ScreenResult> latestScreen() async {
-    final body = await _get('/api/screen/latest');
-    if (body['as_of'] == null) return const ScreenResult();
-    final rows = _rows(body);
+    final s = Map<String, dynamic>.from((d['screen'] as Map?) ?? const {});
+    if (s['as_of'] == null) return const ScreenResult();
     return ScreenResult(
-      asOf: body['as_of'].toString(),
-      screened: rows.length,
-      picks: {
-        for (final r in rows)
-          if (r['selected'] == true && r['rank'] != null) r['ticker'].toString(): ScreenPick.fromJson(r),
-      },
+      asOf: s['as_of'].toString(),
+      screened: (s['screened'] as num?)?.toInt() ?? 0,
+      picks: {for (final r in _list(s['picks'])) r['ticker'].toString(): ScreenPick.fromJson(r)},
     );
   }
-}
-
-class ApiException implements Exception {
-  const ApiException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
 }
 
 /// One ticker's two views for the week, plus its place in the S&P 500 screen.

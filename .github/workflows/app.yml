@@ -1,13 +1,14 @@
 name: App (Flutter)
 
 # check:   analyze + test on every change to app/
-# web:     build the web app            -> deploy: GitHub Pages (main only); data comes from the
-#          laptop's API through its Cloudflare Tunnel (repository variable API_URL)
+# web:     build the web app            -> deploy: GitHub Pages (main only), with the encrypted
+#          data file site-data/data.json beside it (written by orchestration/export_app.py)
 # android: build a release APK          -> downloadable artifact "ti-agent-apk" on the run page
+# Pushing new data (site-data/) redeploys the site, so the app shows it.
 on:
   push:
     branches: [main]
-    paths: ["app/**", ".github/workflows/app.yml"]
+    paths: ["app/**", "site-data/**", ".github/workflows/app.yml"]
   pull_request:
     paths: ["app/**", ".github/workflows/app.yml"]
   workflow_dispatch:
@@ -68,15 +69,22 @@ jobs:
           cache: true
       - run: flutter create --project-name ti_agent --org com.nsskn982 --platforms=web .
       - run: flutter pub get
-      - name: Write build config (public values only, the laptop API's https address)
+      - name: Write build config (public values only; the web app reads data/data.json next to itself)
         env:
-          API_URL: ${{ vars.API_URL }}
           LINKEDIN_URL: ${{ vars.LINKEDIN_URL }}
         run: bash tool/write_config.sh
       - name: Build web
         run: |
           flutter build web --release --base-href "/${GITHUB_REPOSITORY#*/}/" --dart-define-from-file=config.json
           rm config.json
+      - name: Add the encrypted data file
+        run: |
+          mkdir -p build/web/data
+          if [ -f ../site-data/data.json ]; then
+            cp ../site-data/data.json build/web/data/data.json
+          else
+            echo "::warning title=No app data::site-data/data.json is missing; the app will say no data has been published yet."
+          fi
       - uses: actions/upload-pages-artifact@v4
         with:
           path: app/build/web
@@ -102,9 +110,9 @@ jobs:
           cache: true
       - run: flutter create --project-name ti_agent --org com.nsskn982 --platforms=android .
       - run: flutter pub get
-      - name: Write build config (public values only, the laptop API's https address)
+      - name: Write build config (public values only; the APK reads the data file from GitHub Pages)
         env:
-          API_URL: ${{ vars.API_URL }}
+          DATA_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/data.json
           LINKEDIN_URL: ${{ vars.LINKEDIN_URL }}
         run: bash tool/write_config.sh
       - name: Build APK

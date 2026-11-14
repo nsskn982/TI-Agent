@@ -95,7 +95,7 @@ is marked with `process_error` so it isn't retried forever.
   `match_chunks` handles this by doing an exact search when a ticker is given; one ticker's corpus is
   small, so this is fast. Unfiltered queries use the index with a wider `ef_search`.
 - **Local only.** The database runs in Docker and listens on 127.0.0.1, so nothing outside the laptop can
-  reach it. The Flutter app reads through the read-only app API ([web/dashboard/api.py](../web/dashboard/api.py)).
+  reach it. The Flutter app reads a password-encrypted export of its data instead (see section 8).
 - **Incremental refresh and retention.** After the first backfill only new data is fetched
   ([ingestion/refresh.py](../ingestion/refresh.py)), and the weekly screen deletes data no module reads any more
   ([orchestration/retention.py](../orchestration/retention.py)); see the README's *Data lifecycle*.
@@ -297,9 +297,9 @@ access invite-only (the README's guardrail on MAR exposure) without a public sig
   appear instead. With `prefers-reduced-motion` or no JavaScript, it's a plain page with everything
   visible. Each view is compared with the previous good run and marked new, changed or unchanged.
 
-The Flutter app reads the same data through `/api/` ([web/dashboard/api.py](../web/dashboard/api.py)): signed
-12-hour bearer tokens for the same invite-only accounts, CORS limited to the GitHub Pages origin, and only
-results (never raw documents or error text). It reaches the laptop through a Cloudflare Tunnel that exposes `/api/` only.
+The Flutter app can't reach the laptop, so every run exports what it shows into one password-encrypted
+file on GitHub Pages ([orchestration/export_app.py](../orchestration/export_app.py)): AES-256-GCM with a
+PBKDF2-SHA256 key. The app decrypts it in the browser; nothing runs online.
 
 ## 9. Later phases (planned)
 

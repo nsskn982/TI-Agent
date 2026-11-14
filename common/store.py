@@ -218,6 +218,12 @@ class Store:
             (limit,),
         )
 
+    def count_unprocessed(self) -> int:
+        return int(self.query("select count(*) n from documents where processed_at is null and process_error is null")[0]["n"])
+
+    def count_unscored_news(self) -> int:
+        return int(self.query("select count(*) n from documents where source = 'news' and scored_at is null")[0]["n"])
+
     def existing_source_ids(self, ticker: str, source: str) -> set[str]:
         rows = self.query("select source_id from documents where ticker = %s and source = %s", (ticker, source))
         return {r["source_id"] for r in rows}
@@ -408,7 +414,7 @@ class Store:
             (sorted(set(ids)),),
         )
 
-    # ------------------------------------------------------------ app API (read-only)
+    # ------------------------------------------------------------ app data export (read-only)
     APP_RUN_COLUMNS = "id, as_of, model, started_at, finished_at, status"  # never `error` (stack traces)
 
     def app_run(self, before_id: int | None = None) -> dict | None:

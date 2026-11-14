@@ -2,7 +2,7 @@
 
 Data comes from the local PostgreSQL database through common.store, server-side
 only. Django's own database (SQLite) holds just the invite-only user accounts and
-sessions. The same accounts sign in to the Flutter app through /api/ (dashboard/api.py).
+sessions. The Flutter app doesn't use this site: it reads an encrypted data file on GitHub Pages.
 """
 from __future__ import annotations
 
@@ -43,7 +43,6 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "dashboard.api.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -110,11 +109,6 @@ SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_HTTPONLY = True
 LOGIN_MAX_FAILURES = 5                  # per username (per IP: 4x) ...
 LOGIN_LOCKOUT_SECONDS = 15 * 60         # ... within this window, then HTTP 429
-
-# Flutter app API (/api/): signed bearer tokens, and the only origins allowed to call it.
-APP_TOKEN_SECONDS = 12 * 3600
-APP_ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in
-                       (env("APP_ALLOWED_ORIGINS", "https://nsskn982.github.io") or "").split(",") if o.strip()]
 if not DEBUG and not TESTING:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
@@ -123,8 +117,6 @@ if not DEBUG and not TESTING:
     # Behind a TLS-terminating proxy (Render, Fly, nginx) set DJANGO_BEHIND_PROXY=true.
     if (env("DJANGO_BEHIND_PROXY", "false") or "false").lower() == "true":
         SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-        # Cloudflare Tunnel: throttle logins per visitor, not per cloudflared (see tiweb/security.py).
-        TRUST_CF_CONNECTING_IP = True
 
 LOGGING = {
     "version": 1,

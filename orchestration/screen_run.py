@@ -24,7 +24,7 @@ import sys
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from common import logging_setup
+from common import logging_setup, progress
 from common.config import benchmark, env_int, require
 from common.http import make_session
 from ingestion import edgar, fundamentals, prices, refresh, universe
@@ -39,6 +39,15 @@ BACKFILL_DAYS = 730
 def refresh_universe(store, counts: Counter, errors: list) -> tuple[list[str], dict[str, dict], dict[str, int]]:
     """Upsert S&P 500 + S&P 400 constituents.
     Returns (symbols, {symbol: {"sector", "index"}}, {symbol: cik})."""
+    with progress.step("Index members") as st:
+        out = _refresh_universe(store, counts, errors)
+        st.set_result(f"{len(out[0]):,} stocks" + ("" if out[1] else " (stored list)"))
+        if not out[1]:
+            st.problem()
+        return out
+
+
+def _refresh_universe(store, counts: Counter, errors: list) -> tuple[list[str], dict[str, dict], dict[str, int]]:
     try:
         members = universe.fetch_universe()
     except Exception as exc:
@@ -74,6 +83,12 @@ def refresh_data(store, symbols: list[str], ciks: dict[str, int], counts: Counte
     store.upsert_tickers([{"symbol": bench}])
     full_since = today - timedelta(days=PRICE_HISTORY_DAYS)
     everyone = symbols + [bench]
+    with progress.step("Prices", total=len(everyone)) as st:
+        _refresh_prices(store, everyone, full_since, today, counts, errors, st)
+    _refresh_fundamentals(store, symbols, ciks, today, counts, errors)
+
+
+def _refresh_prices(store, everyone, full_since, today, counts, errors, st) -> None:
     stored = refresh.marks(store, "price_marks", everyone)
     starts = {s: refresh.price_since(stored.get(s), full_since, today) for s in everyone}
     backfill = [s for s in everyone if starts[s] == full_since]
@@ -91,9 +106,15 @@ def refresh_data(store, symbols: list[str], ciks: dict[str, int], counts: Counte
         rows = got.get(s)
         if not rows:
             errors.append({"source": "prices", "key": s, "error": "no price rows"})
+            st.problem()
             continue
         store.upsert_prices(rows)
         counts["prices"] += len(rows)
+    full = counts.get("prices_full", len(everyone))
+    st.set_result(f"{counts['prices']:,} rows · {full:,} full history, {len(everyone) - full:,} new days only")
+
+
+def _refresh_fundamentals(store, symbols, ciks, today, counts, errors) -> None:
 
     session = make_session(require("SEC_USER_AGENT"))
     try:
@@ -103,17 +124,20 @@ def refresh_data(store, symbols: list[str], ciks: dict[str, int], counts: Counte
         log.warning("SEC ticker map unavailable (%s); using Wikipedia CIKs", exc)
     filed_since = today - timedelta(days=BACKFILL_DAYS + FUNDAMENTALS_EXTRA_DAYS)
     filed = refresh.marks(store, "fundamentals_marks", symbols)
-    for s in symbols:
+    for s in progress.each("SEC fundamentals", symbols):
         cik = (sec_map.get(s) or {}).get("cik") or ciks.get(s)
         if not cik:
             errors.append({"source": "fundamentals", "key": s, "error": "no CIK"})
+            progress.problem()
             continue
         try:
             rows = fundamentals.fetch_fundamentals(session, s, cik, refresh.filed_since(filed.get(s), filed_since))
             store.upsert_fundamentals(rows)
             counts["fundamentals"] += len(rows)
+            progress.add_rows(len(rows), "facts")
         except Exception as exc:
             errors.append({"source": "fundamentals", "key": s, "error": f"{type(exc).__name__}: {exc}"[:300]})
+            progress.problem()
 
 
 def backfill_picks(store, picks: list[str], counts: Counter, errors: list) -> None:
@@ -123,6 +147,8 @@ def backfill_picks(store, picks: list[str], counts: Counter, errors: list) -> No
     newcomers = [t for t in picks if not store.has_documents(t)]
     counts["new_picks"] = len(newcomers)
     if not newcomers:
+        for name in ("News", "Filings", "Load models", "Chunk + embed", "News sentiment"):
+            progress.skip(name, "no new picks")
         return
     log.info("Backfilling news and filings for new picks: %s", ", ".join(newcomers))
     run = ingest(newcomers, BACKFILL_DAYS, ("news", "filings"), store)
@@ -133,7 +159,10 @@ def backfill_picks(store, picks: list[str], counts: Counter, errors: list) -> No
     from processing.run import process, score_sentiment
     from processing.sentiment import SentimentScorer
 
-    stats = process(store, Embedder())
+    with progress.step("Load models"):
+        embedder = Embedder()
+        embedder.encode(["warm-up"])
+    stats = process(store, embedder)
     counts["chunked_docs"], counts["chunks"] = stats["documents"], stats["chunks"]
     errors.extend({"source": "processing", **e} for e in stats["errors"][:50])
     try:
@@ -153,6 +182,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--keep-old", action="store_true", help="Skip the retention step (keep old data)")
     args = p.parse_args(argv)
 
+    steps = ([] if args.skip_refresh else ["Index members", "Prices", "SEC fundamentals"]) + [
+        f"Rank + pick top {args.top_n}"] + ([] if args.no_backfill else [
+            "News", "Filings", "Load models", "Chunk + embed", "News sentiment"]) + ([] if args.keep_old else ["Retention"]) + [
+        "Export app data"]
+    with progress.workflow("Weekly screen", steps):
+        return _run(args)
+
+
+def _run(args) -> int:
     from common.store import Store
 
     store = Store()
@@ -171,9 +209,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # Data is strictly before as_of; screening "as of tomorrow" includes today's close.
     as_of = args.as_of or date.today() + timedelta(days=1)
-    rows = run_screen(store, symbols, as_of, benchmark(), top_n=args.top_n, info=info)
-    store.upsert_screens(rows)
-    picks = [r["ticker"] for r in sorted((r for r in rows if r["selected"]), key=lambda r: r["rank"])]
+    with progress.step(f"Rank + pick top {args.top_n}") as st:
+        rows = run_screen(store, symbols, as_of, benchmark(), top_n=args.top_n, info=info)
+        store.upsert_screens(rows)
+        picks = [r["ticker"] for r in sorted((r for r in rows if r["selected"]), key=lambda r: r["rank"])]
+        st.set_result(f"{sum(r['quality_pass'] for r in rows):,} of {len(rows):,} passed quality · "
+                      + ", ".join(picks[:5]) + ("…" if len(picks) > 5 else ""))
     counts["screened"] = len(rows)
     counts["quality_pass"] = sum(r["quality_pass"] for r in rows)
     log.info("Top %d: %s", len(picks), ", ".join(picks))
@@ -184,10 +225,21 @@ def main(argv: list[str] | None = None) -> int:
     if not args.keep_old:
         from orchestration.retention import prune
 
-        try:
-            counts.update({f"pruned_{k}": v for k, v in prune(store).items() if v})
-        except Exception as exc:
-            errors.append({"source": "retention", "key": "prune", "error": f"{type(exc).__name__}: {exc}"[:300]})
+        with progress.step("Retention") as st:
+            try:
+                pruned = {k: v for k, v in prune(store).items() if v}
+                counts.update({f"pruned_{k}": v for k, v in pruned.items()})
+                st.set_result(f"{sum(pruned.values()):,} rows deleted" if pruned else "nothing to delete")
+            except Exception as exc:
+                errors.append({"source": "retention", "key": "prune", "error": f"{type(exc).__name__}: {exc}"[:300]})
+                st.problem()
+
+    try:  # the app shows the new picks (site-data/data.json; push it to publish)
+        from orchestration.export_app import export_if_configured
+
+        export_if_configured(store)
+    except Exception as exc:
+        errors.append({"source": "export", "key": "app data", "error": f"{type(exc).__name__}: {exc}"[:300]})
 
     status = "ok" if not errors else ("error" if not picks else "partial")
     store.log_run({

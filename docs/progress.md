@@ -15,8 +15,9 @@ threat model and the security review, see [security.md](security.md).
 - **Refresh and retention:** after the first backfill only new data is downloaded
   ([ingestion/refresh.py](../ingestion/refresh.py)); the weekly screen then deletes data no module reads any
   more ([orchestration/retention.py](../orchestration/retention.py)).
-- **App:** still on GitHub Pages. It now reads an invite-only JSON API on the laptop
-  ([web/dashboard/api.py](../web/dashboard/api.py), `run_api.cmd`), reached through a Cloudflare Tunnel.
+- **App:** still on GitHub Pages. With no server online, every run exports the app's data into one
+  password-encrypted file, `site-data/data.json` ([orchestration/export_app.py](../orchestration/export_app.py)),
+  which you push; the app decrypts it in the browser.
   The sections below that mention Supabase, `db/rls.sql` or the cloud workflows describe the old setup.
 
 ## Summary
@@ -27,7 +28,7 @@ threat model and the security review, see [security.md](security.md).
 | P2 Knowledge | Quant engine, hybrid retrieval (M4–M5) | Done | Relevant chunks on 10 test queries | **Passed 2026-11-11.** 10/10 automatic checks; 10/10 on-topic by manual review with rerank |
 | P3 Agent | Agent, weekly run, Telegram (M6, M8, M9) | Done | 4 weekly runs of valid, cited JSON | **1 / 4.** Run #2 was `ok` for all 5 tickers |
 | Web | Django dashboard (M9 web) | Done | — | Running locally against live data |
-| App | Flutter client | Analyzed and tested locally (19 tests) | — | Needs the Cloudflare Tunnel and the `API_URL` variable (see README) |
+| App | Flutter client | Analyzed, tested (21 tests) and built locally | — | Push `site-data/data.json` and turn on GitHub Pages (see README) |
 | P5 Research | QAOA portfolio, M10 evaluation | Not started | — | — |
 
 **Tests:** 95 Python tests, all passing offline (no network or keys needed).
@@ -48,7 +49,7 @@ threat model and the security review, see [security.md](security.md).
 | Weekly run + Telegram | [orchestration/](../orchestration/), [delivery/](../delivery/) | Status `ok` / `partial` / `error`; Telegram not configured yet |
 | Daily refresh | [run_daily.cmd](../run_daily.cmd), [scripts/register_tasks.ps1](../scripts/register_tasks.ps1) | Weekdays 23:45 local; new data only after the first run |
 | Website | [web/](../web/) | Scroll-story home page, ticker charts, citations, pipeline status, Contact tab |
-| Flutter app | [app/](../app/) | Reads the laptop's `/api/` through a Cloudflare Tunnel; see [app/README.md](../app/README.md) |
+| Flutter app | [app/](../app/) | Reads the encrypted `data/data.json` on GitHub Pages; see [app/README.md](../app/README.md) |
 
 ## Data loaded (backfill, 2026-11-11)
 

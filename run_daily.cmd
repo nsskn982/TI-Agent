@@ -16,11 +16,9 @@ if not exist "%PY%" ( echo [x] No .venv found. Run scripts\setup.ps1 first. & se
 call scripts\ensure_db.cmd || ( set "RC=2" & goto :finish )
 
 set "TI_LOG_FILE=%~dp0logs\daily_run.log"
-"%PY%" -m ingestion.run %*
+rem One live view: ingest new data, then chunk, embed and score it (orchestration/daily_run.py).
+"%PY%" -m orchestration.daily_run %*
 set "RC=%ERRORLEVEL%"
-rem Embed whatever did arrive, even if one source failed.
-"%PY%" -m processing.run
-if errorlevel 1 set "RC=1"
 
 if "%RC%"=="0" ( echo [ok] Daily refresh done. ) else ( echo [!] Finished with errors. Details in logs\daily_run.log )
 

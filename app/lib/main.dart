@@ -4,25 +4,27 @@ import 'config.dart';
 import 'data.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
-import 'session.dart';
 import 'theme.dart';
+import 'vault.dart';
 
 Future<void> main() async {
+  // PBKDF2/AES run natively on Android and iOS (cryptography_flutter registers itself) and with
+  // the browser's Web Crypto on the web.
   WidgetsFlutterBinding.ensureInitialized();
   final problem = AppConfig.problem();
   if (problem != null) {
     runApp(_ConfigError(problem));
     return;
   }
-  final session = Session(AppConfig.apiUrl);
-  await session.restore();
-  runApp(TiApp(session: session));
+  final vault = Vault(AppConfig.resolvedDataUrl);
+  await vault.restore(); // opens straight away on a device that has unlocked before
+  runApp(TiApp(vault: vault));
 }
 
 class TiApp extends StatelessWidget {
-  const TiApp({super.key, required this.session});
+  const TiApp({super.key, required this.vault});
 
-  final Session session;
+  final Vault vault;
 
   @override
   Widget build(BuildContext context) {
@@ -31,24 +33,26 @@ class TiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
-      home: AuthGate(session: session),
+      home: AuthGate(vault: vault),
     );
   }
 }
 
-/// Shows the login screen until there is a valid token, then the suggestions.
+/// Shows the unlock screen until the data file is decrypted, then the suggestions.
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key, required this.session});
+  const AuthGate({super.key, required this.vault});
 
-  final Session session;
+  final Vault vault;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: session,
+      listenable: vault,
       builder: (context, _) {
-        if (!session.signedIn) return LoginScreen(session: session);
-        return HomeScreen(data: ApiDataSource(session), onSignOut: session.signOut);
+        final data = vault.data;
+        if (data == null) return LoginScreen(vault: vault);
+        // A new key per unlock/reload so the home screen loads the new data.
+        return HomeScreen(key: ObjectKey(data), data: BundleDataSource(data), onSignOut: vault.lock);
       },
     );
   }

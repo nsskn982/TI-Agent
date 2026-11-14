@@ -7,6 +7,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from common import progress
+
 log = logging.getLogger(__name__)
 
 
@@ -69,12 +71,14 @@ def fetch_many(symbols: list[str], start: date, end: date | None = None, chunk: 
     out: dict[str, list[dict]] = {}
     for i in range(0, len(symbols), chunk):
         part = symbols[i:i + chunk]
+        progress.current_step().set_note(f"batch {i // chunk + 1} of {(len(symbols) + chunk - 1) // chunk}")
         try:
             df = yf.download(part, start=start.isoformat(), end=end.isoformat(), auto_adjust=False,
                              actions=False, group_by="ticker", threads=True, progress=False)
             out.update(split_download(df, part))
         except Exception as exc:
             log.warning("batch download failed for %d symbols (%s); retrying one by one", len(part), exc)
+        progress.current_step().advance(len(part))
     for s in symbols:
         if s not in out:
             try:

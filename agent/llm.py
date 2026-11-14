@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -9,6 +10,8 @@ import uuid
 import requests
 
 from common.config import env, env_int
+
+log = logging.getLogger(__name__)
 
 _TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 
@@ -107,6 +110,13 @@ class OllamaClient:
             hint = (" (Ollama could not load the model: the machine is short on memory. Close memory-heavy "
                     "apps such as browser tabs, or enlarge the Windows page file.)") if "memory" in body.lower() else ""
             raise LLMError(f"{what}: HTTP {resp.status_code}: {body}{hint}")
+
+    def unload(self) -> None:
+        """Free the model's memory now instead of after keep_alive (the daily refresh may run next)."""
+        try:
+            self._post("/api/generate", {"model": self.model, "keep_alive": 0})
+        except Exception as exc:  # best effort: Ollama frees it after keep_alive anyway
+            log.warning("Could not unload %s: %s", self.model, exc)
 
     def warmup(self) -> None:
         """Load the model now, before the run allocates its own memory (embedder, reranker)."""

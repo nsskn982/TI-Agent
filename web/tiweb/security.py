@@ -50,16 +50,11 @@ def csp(request):
 
 def _client_ip(request) -> str:
     # REMOTE_ADDR only: X-Forwarded-For is client-controlled unless a trusted proxy sets it.
-    # Behind the Cloudflare Tunnel every request arrives from 127.0.0.1 (cloudflared), so the
-    # visitor's address comes from the CF-Connecting-IP header that cloudflared sets.
-    addr = request.META.get("REMOTE_ADDR", "") or "unknown"
-    if getattr(settings, "TRUST_CF_CONNECTING_IP", False) and addr in ("127.0.0.1", "::1"):
-        return request.META.get("HTTP_CF_CONNECTING_IP", "").strip() or addr
-    return addr
+    return request.META.get("REMOTE_ADDR", "") or "unknown"
 
 
 def login_keys(ip: str, username: str) -> list[str]:
-    """Failure-counter cache keys, shared by the web form and the app API."""
+    """Failure-counter cache keys for one client address and username."""
     user = (username or "").strip().lower()
     h = lambda s: hashlib.sha256(s.encode()).hexdigest()[:32]  # noqa: E731  (no raw usernames in cache keys)
     keys = [f"login-fail:ip:{h(ip)}"]

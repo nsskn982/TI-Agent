@@ -9,14 +9,13 @@ import 'fake_data.dart';
 
 void main() {
   group('config', () {
-    test('API URL must be https (plain http only for a local dev server)', () {
-      expect(AppConfig.checkApiUrl('https://ti-agent.example.com'), isNull);
-      expect(AppConfig.checkApiUrl('http://localhost:8000'), isNull);
-      expect(AppConfig.checkApiUrl('http://127.0.0.1:8001'), isNull);
-      expect(AppConfig.checkApiUrl('http://ti-agent.example.com'), contains('https'));
-      expect(AppConfig.checkApiUrl('https://user:pw@ti-agent.example.com'), contains('password'));
-      expect(AppConfig.checkApiUrl(''), contains('Missing'));
-      expect(AppConfig.checkApiUrl('not a url'), isNotNull);
+    test('data URL: relative, https, or http only for a local dev server', () {
+      expect(AppConfig.checkDataUrl(''), isNull); // next to the app on GitHub Pages
+      expect(AppConfig.checkDataUrl('data/data.json'), isNull);
+      expect(AppConfig.checkDataUrl('https://nsskn982.github.io/TI-Agent/data/data.json'), isNull);
+      expect(AppConfig.checkDataUrl('http://localhost:8000/data/data.json'), isNull);
+      expect(AppConfig.checkDataUrl('http://example.com/data.json'), contains('https'));
+      expect(AppConfig.checkDataUrl('https://user:pw@example.com/data.json'), contains('password'));
     });
   });
 

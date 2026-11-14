@@ -63,3 +63,4 @@ Register $names[2] "run_weekly.cmd" (New-ScheduledTaskTrigger -Weekly -DaysOfWee
 Write-Host ""
 Write-Host "Daily: weekdays $DailyTime. Screen: Saturday $ScreenTime. AI run: $WeeklyDay $WeeklyTime."
 Write-Host "Run one now with:  Start-ScheduledTask -TaskName '$($names[0])'"
+Write-Host "Each run updates site-data\data.json for the app: push it to publish the new data."
