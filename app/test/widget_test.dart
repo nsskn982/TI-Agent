@@ -42,7 +42,7 @@ void main() {
   });
 
   testWidgets('home shows hero, every ticker scene, views and contact', (tester) async {
-    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.physicalSize = const Size(1200, 3200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -53,6 +53,7 @@ void main() {
     expect(find.text('At a glance'), findsOneWidget);
     expect(find.text('AAPL'), findsWidgets);
     expect(find.text('MSFT'), findsWidgets);
+    expect(find.text('Apple Inc.'), findsWidgets); // company name under the ticker
     expect(find.textContaining('Revenue grew 15.1%'), findsNWidgets(3));
     expect(find.text('New'), findsNWidgets(3));
     expect(find.text('10-K 2026-11-03'), findsWidgets); // resolved citation chip

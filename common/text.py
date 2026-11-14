@@ -37,3 +37,25 @@ def html_to_text(html: str) -> str:
         tag.decompose()
     text = soup.get_text(separator="\n")
     return normalize(text)
+
+
+_STATE_SUFFIX = re.compile(r"\s*/[A-Z]{2,3}/?\s*$")
+_KEEP_UPPER = {"AI", "AT&T", "CVS", "IBM", "NVR", "US", "USA", "II", "III", "LLC", "PLC", "NV", "SA", "AG", "SE"}
+
+
+def company_name(name: str | None) -> str | None:
+    """'ABERCROMBIE & FITCH CO /DE/' -> 'Abercrombie & Fitch Co'. Names already in mixed case only lose
+    a trailing state suffix; all-caps names are title-cased, keeping acronyms (no vowels, or known)."""
+    if not name:
+        return None
+    name = _STATE_SUFFIX.sub("", name.strip())
+    if any(ch.islower() for ch in name):
+        return name
+
+    def word(w: str) -> str:
+        core = w.strip(".,()")
+        if core in _KEEP_UPPER or (core.isalpha() and not set(core) & set("AEIOUY")):
+            return w
+        return "-".join(p[:1] + p[1:].lower() for p in w.split("-"))
+
+    return " ".join(word(w) for w in name.split())

@@ -298,3 +298,37 @@ alter table suggestions add column if not exists bull_case text;
 alter table suggestions add column if not exists bear_case text;
 alter table suggestions add column if not exists catalysts jsonb not null default '[]'::jsonb;
 alter table suggestions add column if not exists valuation text;
+
+-- ---------------------------------------------------------------- M10 evaluation
+-- Agent variants: 'full' (the system) and 'no_retrieval' (baseline: features only, no citations).
+-- The app, the export and the dashboard only ever show 'full'.
+alter table agent_runs  add column if not exists variant text not null default 'full';
+alter table suggestions add column if not exists variant text not null default 'full';
+alter table suggestions drop constraint if exists suggestions_ticker_horizon_as_of_key;
+do $$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'suggestions_ticker_horizon_as_of_variant_key') then
+        alter table suggestions add constraint suggestions_ticker_horizon_as_of_variant_key
+            unique (ticker, horizon, as_of, variant);
+    end if;
+end $$;
+
+-- Realised outcome of each view: entry = first trading day on/after as_of, exit = entry + h trading days.
+alter table performance add column if not exists entry_date date;
+alter table performance add column if not exists exit_date date;
+
+-- Baselines scored the same way, per screen date: 'screen_picks' (the top N treated as bullish),
+-- 'random_quality' (a seeded random sample of quality-passing stocks), 'quality_universe' (all of them).
+create table if not exists baseline_outcomes (
+    as_of             date not null,
+    baseline          text not null,
+    ticker            text not null,
+    horizon_days      int not null,
+    entry_date        date,
+    exit_date         date,
+    ticker_return     double precision,
+    benchmark_return  double precision,
+    excess_return     double precision,
+    evaluated_at      timestamptz not null default now(),
+    primary key (as_of, baseline, ticker, horizon_days)
+);

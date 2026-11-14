@@ -1,67 +1,67 @@
 # Progress report
 
-*Status as of 2026-11-11.* For how the parts work, see [architecture.md](architecture.md); for the
-threat model and the security review, see [security.md](security.md).
-
-## 2026-11-14: moved from Supabase to a local PostgreSQL
-
-- **Database:** Supabase is gone. Everything runs against PostgreSQL 17 + pgvector in Docker
-  (`127.0.0.1:5433`), through the same [common/store.py](../common/store.py) interface (now psycopg 3).
-  `db/rls.sql` was Supabase-specific and has been removed. **The data in Supabase was not migrated**: run
-  the first load again (README → Setup, step 4). That resets the Phase 1 gate count.
-- **Schedules:** the GitHub Actions daily ingest and Friday screen can't reach a local database. They're
-  replaced by Windows scheduled tasks ([scripts/register_tasks.ps1](../scripts/register_tasks.ps1)): daily
-  refresh, weekly screen, weekly AI run.
-- **Refresh and retention:** after the first backfill only new data is downloaded
-  ([ingestion/refresh.py](../ingestion/refresh.py)); the weekly screen then deletes data no module reads any
-  more ([orchestration/retention.py](../orchestration/retention.py)).
-- **App:** still on GitHub Pages. With no server online, every run exports the app's data into one
-  password-encrypted file, `site-data/data.json` ([orchestration/export_app.py](../orchestration/export_app.py)),
-  which you push; the app decrypts it in the browser.
-  The sections below that mention Supabase, `db/rls.sql` or the cloud workflows describe the old setup.
+*Status as of 2026-11-14.* For how the parts work, see [architecture.md](architecture.md). For the
+threat model, see [security.md](security.md). For the full write-up, see the report ([report/](report/)) and
+the paper ([paper/](paper/)).
 
 ## Summary
 
 | Phase | What it covers | Code | Gate | Gate status |
 |---|---|---|---|---|
-| P1 Foundations | Ingestion, processing, storage (M1–M3) | Done | 7 days of data without errors | **Day 0–1.** 2-year backfill loaded with 0 errors; the first scheduled daily run is 22:30 UTC on 2026-11-11. Earliest pass: **2026-11-19** |
+| P1 Foundations | Ingestion, processing, storage (M1–M3) | Done | 7 days of data without errors | **Restarted 2026-11-14** after the move to local PostgreSQL. Full first load done with 0 errors; earliest pass **2026-11-21** |
 | P2 Knowledge | Quant engine, hybrid retrieval (M4–M5) | Done | Relevant chunks on 10 test queries | **Passed 2026-11-11.** 10/10 automatic checks; 10/10 on-topic by manual review with rerank |
-| P3 Agent | Agent, weekly run, Telegram (M6, M8, M9) | Done | 4 weekly runs of valid, cited JSON | **1 / 4.** Run #2 was `ok` for all 5 tickers |
-| Web | Django dashboard (M9 web) | Done | — | Running locally against live data |
-| App | Flutter client | Analyzed, tested (21 tests) and built locally | — | Push `site-data/data.json` and turn on GitHub Pages (see README) |
-| P5 Research | QAOA portfolio, M10 evaluation | Not started | — | — |
+| P3 Agent | Agent, weekly run, Telegram (M6, M8, M9) | Done | 4 weekly runs of valid, cited JSON | **1 / 4.** Week of 2026-11-14: `ok`, 40 views for 20 picks |
+| Web | Django dashboard (M9 web) | Done | — | Runs locally against the database |
+| App | Flutter client on GitHub Pages | Done (21 tests) | — | **Live** at `https://nsskn982.github.io/TI-Agent/`, reading the encrypted `data.json` |
+| P5 Evaluation | M10 scoring, baselines, faithfulness | Done (11 tests) | Primary analysis: 12 closed weeks at 63 trading days | **0 / 12.** First full and baseline views saved; the first 21-day outcomes close on 2026-12-15 |
+| P5 Quantum | M7 QAOA portfolio | Not started | Quantum vs classical report | — |
 
-**Tests:** 95 Python tests, all passing offline (no network or keys needed).
+**Tests:** 148 Python tests and 21 Flutter tests, all passing offline (no network or keys needed).
 
-**Git:** all work is on branch `phase-2-knowledge`, **not pushed**. The daily GitHub Action runs from
-`main`, which still has Phase 1 code only, until the branch is merged.
+## 2026-11-14: what changed
 
-## What exists today
+- **Local database.** Supabase is gone. Everything runs on PostgreSQL 17 + pgvector in Docker
+  (`127.0.0.1:5433`) through [common/store.py](../common/store.py) (psycopg 3). The Supabase data was not
+  migrated, so the first load was run again.
+- **Schedules.** GitHub Actions can't reach a local database, so the jobs are now Windows scheduled tasks
+  ([scripts/register_tasks.ps1](../scripts/register_tasks.ps1)). All four are registered: daily refresh,
+  weekly screen, weekly AI run and the weekly evaluation baseline (`-WithBaseline`).
+- **Refresh and retention.** After the first load only new data is downloaded
+  ([ingestion/refresh.py](../ingestion/refresh.py)). The weekly screen deletes data no module reads any
+  more ([orchestration/retention.py](../orchestration/retention.py)).
+- **App delivery without a server.** Each run exports what the app shows into one AES-256-GCM file,
+  `site-data/data.json` ([orchestration/export_app.py](../orchestration/export_app.py)). You push the file
+  and the app decrypts it in the browser. The local API, the tunnel and Supabase Auth are gone.
+- **Live progress in the terminal.** Every run script shows its steps live ([common/progress.py](../common/progress.py)).
+  The details go to `logs\`.
+- **M10 evaluation** ([evaluation/](../evaluation/)): outcomes, the four comparators, metrics and the report.
+  It runs at the end of every weekly screen.
+- **Agent variants.** `weekly_run --variant no_retrieval` runs the same agent with document search turned
+  off. It is the evaluation's retrieval ablation and is never published.
+- **Company names.** The dashboard, the app (glance cards, ticker scenes, the Compare table, ticker page
+  titles) and the exported data show company names next to tickers. Names come from the screen's Wikipedia
+  list and are tidied for display by `company_name()` in [common/text.py](../common/text.py). The daily
+  refresh no longer overwrites them with SEC registrant names such as `VALERO ENERGY CORP/TX`.
+- **Robustness.** Filing downloads are streamed and capped at 25 MB. Processing stops cleanly when memory
+  runs out. Ollama unloads the model after each run.
+- **Documentation.** There is a technical report ([report/main.tex](report/main.tex), 18 pages) and a
+  journal-style paper ([paper/paper.tex](paper/paper.tex), elsarticle), both with TikZ figures.
 
-| Area | Where | Notes |
-|---|---|---|
-| Database schema | [db/schema.sql](../db/schema.sql), [docker-compose.yml](../docker-compose.yml) | Local PostgreSQL 17 + pgvector; `python -m common.db_init` is safe to re-run |
-| Ingestion: prices, news, filings, XBRL, macro | [ingestion/](../ingestion/) | Point-in-time: filings by EDGAR acceptance time, XBRL by `filed`, FRED with release lags |
-| Processing: chunking, MiniLM embeddings, FinBERT | [processing/](../processing/) | 9,627 chunks, 1,240 scored news items |
-| Quant features and local API | [quant/](../quant/) | API answers local requests only unless `QUANT_API_TOKEN` is set |
-| Hybrid retrieval with rerank | [retrieval/](../retrieval/) | Dense + keyword, RRF, cross-encoder, ≤ 2 chunks per document |
-| Agent (Qwen3.5 4B via Ollama) | [agent/](../agent/) | Citations and numbers checked in code; English-only theses; caps on steps and tool calls |
-| Weekly run + Telegram | [orchestration/](../orchestration/), [delivery/](../delivery/) | Status `ok` / `partial` / `error`; Telegram not configured yet |
-| Daily refresh | [run_daily.cmd](../run_daily.cmd), [scripts/register_tasks.ps1](../scripts/register_tasks.ps1) | Weekdays 23:45 local; new data only after the first run |
-| Website | [web/](../web/) | Scroll-story home page, ticker charts, citations, pipeline status, Contact tab |
-| Flutter app | [app/](../app/) | Reads the encrypted `data/data.json` on GitHub Pages; see [app/README.md](../app/README.md) |
-
-## Data loaded (backfill, 2026-11-11)
+## Data loaded (2026-11-14)
 
 | Data | Rows | | Data | Rows |
 |---|---|---|---|---|
-| Prices (5 tickers + SPY) | 3,306 | | Documents | 1,391 (1,240 news + 151 filings) |
-| XBRL facts | 2,679 | | Chunks with embeddings | 9,627 |
-| Macro observations | 2,604 | | News items scored by FinBERT | 1,240 |
+| Tickers (S&P 500 + 400, SPY) | 904 | | Documents | 5,475 (4,875 news, 600 filings) |
+| Daily prices | 495,468 | | Chunks with embeddings | 37,879 |
+| Fundamentals (XBRL facts) | 429,924 | | Macro observations | 428 |
+| Screen rows | 903 | | Database size | 438 MB |
+
+Filings: 444 8-K, 117 10-Q and 39 10-K. News comes from Finnhub's feed: Yahoo, Benzinga, SeekingAlpha,
+ChartMill, Fintel, CNBC and others.
 
 ## Phase 2 gate: retrieval quality
 
-`python -m retrieval.evaluate` (as of 2026-11-11, k = 5):
+`python -m retrieval.evaluate` (2026-11-11, k = 5):
 
 | Mode | Automatic checks | On-topic top results (manual review) |
 |---|---|---|
@@ -70,127 +70,99 @@ threat model and the security review, see [security.md](security.md).
 
 The agent's `search_knowledge` therefore reranks by default (about 0.5 s per query on CPU).
 
-## Phase 3: weekly runs
+## Weekly screen, week of 2026-11-14
 
-| Run | Result | Why |
-|---|---|---|
-| #1 | `error`, no suggestions | Windows ran out of commit memory (27.0 of 27.3 GB), so Ollama couldn't load the model. Failed cleanly, saved nothing invalid. |
-| #2 | **`ok`: 5/5 tickers, 10 suggestions, 4 min** | The run now loads the model first, keeps it loaded, and retries memory-related load failures. |
+903 stocks screened, 728 passed the quality filter, top 20 kept. New picks get two years of news and
+filings, then embeddings.
 
-Run #2 stances (1–3m / 6–24m): AAPL bullish / neutral, AMZN neutral / neutral, GOOGL neutral / bullish,
-MSFT bullish / bullish, NVDA neutral / bullish; confidence 0.58–0.62. Four saves were rejected (figures not
-found in any tool output) and corrected by the model.
+## Phase 3 and evaluation: AI runs, week of 2026-11-14
 
-**Quality issues found by reading the theses:**
+| Run | Variant | Result | Time | Saves rejected by the guardrails | Citations |
+|---|---|---|---|---|---|
+| `agent_runs` #1 | `full` | **`ok`**: 20 picks, 40 views | 32 min | 49 of 89 | 152 |
+| `agent_runs` #2 | `no_retrieval` | **`ok`**: 20 picks, 40 views | 31 min | 73 of 113 | none (by design) |
 
-| Issue | Status |
-|---|---|
-| Number check accepted "50%" because `sma_50` is a field *name* | **Fixed**: only JSON values count, dates ignored |
-| Risk written partly in Chinese ("AI adoption不及预期") | **Fixed**: non-English text is rejected so the model rewrites it. The line already saved stays until the next run |
-| Real numbers under the wrong label (NVDA "$127B FCF yield" is FCF) | **Open.** Prompt glossary added; to be measured by M10 citation faithfulness |
+| Stances | 1–3 months (bull / neutral / bear) | 6–24 months (bull / neutral / bear) | Mean confidence |
+|---|---|---|---|
+| Full | 17 / 2 / 1 | 13 / 6 / 1 | 0.59 |
+| No retrieval | 14 / 6 / 0 | 12 / 6 / 2 | 0.59 |
+
+The two variants agreed on 13 of 20 stances at each horizon. Cohen's κ is **0.07** for 1–3 months and
+**0.32** for 6–24 months. So document search changes the short-horizon calls much more than the long ones.
+This is one week, and whether either variant is *right* is unknown until the outcomes close.
+
+**Why so many saves were rejected:**
+
+- **Full run:** 26 of the 49 were figures not found in any tool output, and 23 were missing fields
+  (bull case, bear case, stance or thesis). In every case the model corrected the save and tried again.
+- **No-retrieval run:** most rejections were period labels. In "3m momentum", the number check reads "3m"
+  as "3 million" and finds no such number in the tool output. That was a false positive. It cost steps but
+  no views: 3 tickers needed a second attempt. **Fixed on 2026-11-14, after week 1** (see below).
+
+**Evaluation report** (`reports/evaluation.md`): 1 week of views, 0 of 12 weeks closed, marked preliminary.
+120 view outcomes and 2,304 baseline outcomes are waiting for their windows to close. The first closes are
+21 trading days after 2026-11-14.
 
 Gate query (`docker exec -it ti-agent-db psql -U ti_agent`):
 
 ```sql
-select r.id, r.as_of, r.status, count(s.id) as suggestions,
+select r.id, r.as_of, r.variant, r.status, count(s.id) as suggestions,
        count(*) filter (where cardinality(s.sources) > 0) as cited
 from agent_runs r left join suggestions s on s.run_id = r.id
-group by r.id order by r.as_of desc limit 8;
+group by r.id order by r.id desc limit 8;
 ```
 
-## Website
+## Earlier runs (Supabase era, 5-stock watchlist)
 
-An invite-only Django site in [web/](../web/) that reads the local database server-side.
+| Run | Result | Notes |
+|---|---|---|
+| #1 | `error`, no suggestions | Windows ran out of commit memory, so Ollama couldn't load the model. It failed cleanly and saved nothing invalid |
+| #2 | `ok`: 5 tickers, 10 views, 4 min | The model now loads first and stays loaded. Loads that fail for lack of memory are retried |
 
-| Page | Shows |
-|---|---|
-| `/` | Scroll story: intro with this week's numbers, an at-a-glance grid, one pinned scene per ticker where both views slide in as you scroll (marked **New** / **Changed from …**), and a contact section |
-| `/t/<ticker>/` | 12-month chart against SPY (indexed to 100), computed features, history |
-| `/c/<id>/` | The exact cited passage, with a link to the source |
-| `/status/` | Gate counters, agent runs, ingestion runs |
+These quality fixes came from reading the theses:
 
-Checked in Edge with live data in light and dark mode, at desktop and phone widths, with no
-Content-Security-Policy violations.
+- **Fixed:** "50%" was accepted because `sma_50` is a field *name*. Now only JSON values count, and dates are ignored.
+- **Fixed:** non-English text (one risk line was partly in Chinese) is rejected.
+- **Open:** real numbers sometimes carry the wrong label. This is measured by the M10 citation-faithfulness annotation.
 
-## Flutter app
+## Website and app
 
-Code in [app/](../app/): sign in with Supabase Auth, this week's suggestions as a scroll story, ticker
-detail with a price chart and history, cited passages. One codebase for **web, Android and iOS**. It
-replaces hosting the Django site: the app needs no server of its own.
-
-- **Web:** [.github/workflows/app.yml](../.github/workflows/app.yml) runs `flutter analyze` and
-  `flutter test`, builds the web version, and publishes it to GitHub Pages
-  (`https://nsskn982.github.io/TI-Agent/`) on every push to `main`.
-- **Android:** build an APK locally and send it to testers.
-- **iOS:** needs a Mac and TestFlight.
-
-**Not yet compiled.** Flutter isn't installed on this machine, so the first workflow run is the first
-compile.
-
-Before the first publish:
-
-1. Re-run [db/rls.sql](../db/rls.sql) in the Supabase SQL editor. It adds the app's read access: run
-   summaries without error text, and `app_citations()` for cited passages only.
-2. In Supabase, turn **off** public sign-ups and create users (see [security.md](security.md)).
-3. Add the `SUPABASE_ANON_KEY` repository secret, and set *Settings → Pages → Source* to *GitHub Actions*.
-
-## Stock screen (added 2026-11-11, widened 2026-11-12)
-
-The watchlist is no longer hand-picked. Every Friday a GitHub Action screens the **S&P 500 + S&P MidCap
-400** (about 900 large- and mid-cap stocks) and keeps the **top 20**; see
-[architecture.md §5a](architecture.md#5a-weekly-stock-screen-quantscreenpy-orchestrationscreen_runpy).
-
-**2026-11-12 status:** the screen has **not run yet**. The `screens` table is empty, so last night's weekly
-run (#3) fell back to the 5 stocks in `watchlist.txt`. It must be started once by hand (below).
-
-**Deeper analysis (2026-11-12).** Each AI view now has a thesis, **bull case**, **bear case**, **catalysts**
-and a **valuation** view, as well as risks. All of it is cited, and every number in it is checked against the
-tool outputs. The app adds:
-- a **Compare** table of all picks, sortable by any column
-- daily figures per pick: last close and day move, position vs the 50- and 200-day averages, distance from
-  the 52-week high, P/E
-
-- **Score:** momentum among quality companies. Quality means profitable and cash-generating, from SEC
-  financials. Momentum blends the 12-1 month return with 6- and 3-month returns vs the S&P 500, minus a
-  volatility penalty.
-- **Pipeline:** the picks get two years of news and filings, then embeddings. The daily ingest and the
-  weekly agent run use the picks automatically.
-- **App:** lists the picks in rank order, with each one's rank, sector and the numbers behind its place.
-- **Checked live:** the Wikipedia list (503 constituents, 11 sectors, every one with an SEC CIK) and the
-  batched price download (including `BRK-B` and `BF-B`).
-- **Tests:** 14 new Python tests for parsing, the momentum maths, the quality filter, ranking,
-  no-lookahead and the fallback; Dart tests for rank ordering.
-
-**Before the first screen:** re-run `db/schema.sql` (adds `screens`, the ticker index columns and the
-write-up columns), then `db/rls.sql` (lets the app read `screens`). Then start the
-*Weekly stock screen (S&P 500 + MidCap 400)* workflow by hand.
-
-**Costs:**
-- **Weekly agent run:** goes from 5 tickers (~4 min) to 20 with the longer write-up (~30 min).
-- **First screen:** downloads about 4–5 GB of SEC data for ~900 companies and backfills 20 tickers
-  (~1.5–2 h in Actions; time limit 4 h).
-- **Later weeks:** only new entrants are backfilled.
-- **Database:** prices and fundamentals for 900 stocks add roughly 150 MB, which stays under the free
-  0.5 GB.
+- **Django dashboard** ([web/](../web/)), local only:
+  - `/` is a scroll story of this week's picks, with company names.
+  - `/t/<ticker>/` shows the 12-month chart against SPY, the features and the history.
+  - `/c/<id>/` shows a cited passage.
+  - `/status/` shows the runs.
+- **Flutter app** ([app/](../app/)): one codebase for web, Android and iOS. It is published to GitHub Pages
+  by [.github/workflows/app.yml](../.github/workflows/app.yml), which copies `site-data/data.json` in as
+  `data/data.json`. Opening it asks for the password once; after that the device remembers the derived key.
 
 ## Next steps
 
-1. Fix whatever the first *App (Flutter)* workflow run reports, then check the published web app.
-2. Watch the daily job through 2026-11-19 for the Phase 1 gate.
-3. Three more weekly runs for the Phase 3 gate. Close heavy apps during the run (the model needs about
-   4.6 GB of commit memory).
-4. Set up the Telegram bot (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) and `scripts/register_tasks.ps1`.
-5. Android APK for testers; computed features in a table the app can read; push notifications.
-6. Phase 5: QAOA portfolio experiment and the M10 evaluation (hit rate, calibration, citation faithfulness).
+1. **Push** `site-data/data.json` after each run, or the app keeps showing the last pushed week.
+2. ~~Fix the "3m" false positive~~ **Done 2026-11-14**, before the second week. In
+   [agent/schema.py](../agent/schema.py), a whole number of at most 60 written directly against "m" with no
+   `$` sign (`1m`, `3m`, `6M`, `12m`) is treated as a period in months and isn't checked. `$3m`, `3.5m`,
+   `250m` and `3 m` are still checked as millions. Week 1 ran under the old check, and the paper records
+   the change as a protocol amendment. 13 of the 26 number rejections in the full run and 51 of the 71 in
+   the no-retrieval run would have passed under the new rule.
+3. Let the scheduled tasks run. That gives Phase 1 (7 clean days, around 2026-11-21) and Phase 3 (4 weekly
+   runs, around 2026-12-05).
+4. First faithfulness annotation, after 4 weeks: `python -m evaluation.faithfulness sample --n 60`. Two
+   annotators then score it with `score`.
+5. Primary evaluation after 12 closed weeks at 63 trading days, around May 2027.
+6. Phase 5 quantum: the QAOA portfolio experiment against a classical optimiser.
+7. Optional: set up the Telegram bot (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`), and an Android APK for testers.
 
 ## Known limitations
 
 | Limitation | Impact | Possible fix |
 |---|---|---|
+| The model needs about 4.6 GB of commit memory; the page file is fixed at 6–12 GB | Runs fail with cudaMalloc errors when browsers are open | Close heavy apps before the Saturday runs |
+| The app is as fresh as the last push | Readers see old data if you forget to push | Push after each run (automating it would need a token on the laptop) |
 | Finnhub free tier: about 1 year of news, headline and summary only | No full article text; short history | Add GDELT or RSS feeds |
 | Filings cut off at 300k characters | The end of a very long 10-K can be lost | Extract Item 1A / Item 7 |
-| 8-Ks: main document only | Press release (EX-99.1) missed | Fetch EX-99 exhibits |
-| Some XBRL tags not on our list | Some ratios `null` | Add fallback tags as they turn up |
-| Quarterly EPS derived from year-to-date figures | Slightly off when share count changes | Rebuild from net income and diluted shares |
+| 8-Ks: main document only | The press release (EX-99.1) is missed | Fetch EX-99 exhibits |
+| Some XBRL tags not on our list | Some ratios are `null` | Add fallback tags as they turn up |
 | FRED values have no release timestamp | Release delays are conservative estimates | Use ALFRED vintages |
-| A 4B model sometimes mislabels numbers | Thesis wording can be wrong even when the number is real | M10 faithfulness evaluation; larger model when hardware allows |
+| A 4B model sometimes mislabels numbers | Thesis wording can be wrong even when the number is real | M10 faithfulness evaluation; a larger model when hardware allows |
+| One week of views | No evaluation results yet | Time: the primary analysis needs 12 closed weeks |

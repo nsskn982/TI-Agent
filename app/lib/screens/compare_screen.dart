@@ -53,6 +53,7 @@ final compareColumns = <CompareColumn>[
   CompareColumn('#', 'Rank in this week\'s screen', (c, q) => c.pick?.rank.toDouble(),
       (v) => v is double ? '#${v.toInt()}' : '–'),
   CompareColumn('Stock', 'Ticker', (c, q) => c.ticker, _text, numeric: false),
+  CompareColumn('Company', 'Company name', (c, q) => c.name, _text, numeric: false),
   CompareColumn('Size', 'S&P 500 = large cap, S&P 400 = mid cap',
       (c, q) => switch (c.pick?.metrics['index']) { 'S&P 400' => 'Mid', 'S&P 500' => 'Large', _ => null },
       _text, numeric: false),
@@ -168,7 +169,7 @@ class _CompareScreenState extends State<CompareScreen> {
                 for (final card in rows)
                   DataRow(
                     onSelectChanged: (_) => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => TickerScreen(ticker: card.ticker, data: widget.data))),
+                        builder: (_) => TickerScreen(ticker: card.ticker, name: card.name, data: widget.data))),
                     cells: [
                       for (final c in compareColumns)
                         DataCell(Text(

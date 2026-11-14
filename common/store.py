@@ -187,8 +187,9 @@ class Store:
         return n
 
     # ------------------------------------------------------------ agent (Phase 3)
-    def start_agent_run(self, as_of: str, model: str | None) -> int:
-        res = self._write("agent_runs", [{"as_of": as_of, "model": model, "status": "running"}], returning="id")
+    def start_agent_run(self, as_of: str, model: str | None, variant: str = "full") -> int:
+        res = self._write("agent_runs", [{"as_of": as_of, "model": model, "status": "running", "variant": variant}],
+                          returning="id")
         return int(res[0]["id"])
 
     def finish_agent_run(self, run_id: int, status: str, error: str | None = None) -> None:
@@ -202,7 +203,7 @@ class Store:
             log.exception("Could not write tool_calls row")
 
     def upsert_suggestion(self, row: dict) -> None:
-        self._write("suggestions", [row], on_conflict="ticker,horizon,as_of")
+        self._write("suggestions", [{"variant": "full", **row}], on_conflict="ticker,horizon,as_of,variant")
 
     def log_run(self, row: dict) -> None:
         try:
@@ -382,10 +383,11 @@ class Store:
 
     # ------------------------------------------------------------ website (read-only)
     def agent_runs(self, limit: int = 20) -> list[dict]:
-        return self.query("select * from agent_runs order by id desc limit %s", (limit,))
+        return self.query("select * from agent_runs where variant = 'full' order by id desc limit %s", (limit,))
 
     def latest_good_run(self) -> dict | None:
-        rows = self.query("select * from agent_runs where status in ('ok', 'partial') order by id desc limit 1")
+        rows = self.query("select * from agent_runs where status in ('ok', 'partial') and variant = 'full' "
+                          "order by id desc limit 1")
         return rows[0] if rows else None
 
     def ingestion_runs(self, limit: int = 40) -> list[dict]:
@@ -399,8 +401,8 @@ class Store:
         return self.query("select * from suggestions where run_id = %s order by ticker", (run_id,))
 
     def ticker_suggestions(self, ticker: str, limit: int = 30) -> list[dict]:
-        return self.query("select * from suggestions where ticker = %s order by as_of desc limit %s",
-                          (ticker, limit))
+        return self.query("select * from suggestions where ticker = %s and variant = 'full' "
+                          "order by as_of desc limit %s", (ticker, limit))
 
     def tickers(self) -> list[dict]:
         return self.query("select symbol, name, active from tickers where active order by symbol")
@@ -420,7 +422,7 @@ class Store:
     def app_run(self, before_id: int | None = None) -> dict | None:
         """Latest good run, or the latest one before `before_id`."""
         rows = self.query(
-            f"select {self.APP_RUN_COLUMNS} from agent_runs where status in ('ok', 'partial') "
+            f"select {self.APP_RUN_COLUMNS} from agent_runs where status in ('ok', 'partial') and variant = 'full' "
             "and (%(before)s::bigint is null or id < %(before)s) order by id desc limit 1",
             {"before": before_id},
         )
@@ -451,3 +453,63 @@ class Store:
         )
         return {"as_of": rows[0]["as_of"] if rows else None,
                 "rows": [{k: r[k] for k in ("ticker", "rank", "selected", "metrics")} for r in rows]}
+
+    # ------------------------------------------------------------ M10 evaluation
+    def eval_views(self) -> list[dict]:
+        return self.query("select id, run_id, ticker, horizon, stance, confidence, as_of, variant from suggestions "
+                          "order by as_of, id")
+
+    def performance_keys(self) -> set[tuple[int, int]]:
+        return {(r["suggestion_id"], r["horizon_days"])
+                for r in self.query("select suggestion_id, horizon_days from performance")}
+
+    def upsert_performance(self, rows: Sequence[dict]) -> int:
+        return self._upsert("performance", rows, "suggestion_id,horizon_days")
+
+    def screen_sets(self) -> list[dict]:
+        """Every screen's quality-passing stocks: [{as_of, ticker, selected}]."""
+        return self.query("select as_of, ticker, selected from screens where quality_pass order by as_of, ticker")
+
+    def baseline_keys(self) -> set[tuple[str, str, str, int]]:
+        return {(r["as_of"], r["baseline"], r["ticker"], r["horizon_days"])
+                for r in self.query("select as_of, baseline, ticker, horizon_days from baseline_outcomes")}
+
+    def upsert_baselines(self, rows: Sequence[dict]) -> int:
+        return self._upsert("baseline_outcomes", rows, "as_of,baseline,ticker,horizon_days")
+
+    def price_closes(self, ticker: str, start: date) -> list[tuple[str, float]]:
+        """[(date, adjusted close)] from `start`, oldest first; for realised returns."""
+        rows = self.query("select date, coalesce(adj_close, close) as px from prices "
+                          "where ticker = %s and date >= %s and coalesce(adj_close, close) > 0 order by date",
+                          (ticker, start))
+        return [(r["date"], float(r["px"])) for r in rows]
+
+    def eval_scored(self) -> list[dict]:
+        return self.query(
+            "select s.id, s.ticker, s.horizon, s.stance, s.confidence, s.as_of, s.variant, "
+            "       p.horizon_days, p.ticker_return, p.benchmark_return, p.excess_return, p.hit "
+            "from performance p join suggestions s on s.id = p.suggestion_id order by s.as_of, s.id")
+
+    def eval_baselines(self) -> list[dict]:
+        return self.query("select as_of, baseline, ticker, horizon_days, excess_return from baseline_outcomes "
+                          "order by as_of, baseline, ticker")
+
+    def faithfulness_pairs(self, variant: str = "full") -> list[dict]:
+        """(view, cited passage) pairs for the citation-faithfulness annotation."""
+        return self.query(
+            "select s.id as suggestion_id, s.ticker, s.horizon, s.as_of, s.thesis, s.bull_case, s.bear_case, "
+            "       s.valuation, c.id as chunk_id, c.source, c.doc_type, c.published_at, c.content "
+            "from suggestions s cross join lateral unnest(s.sources) src "
+            "join chunks c on ('chunk_' || c.id) = src "
+            "where s.variant = %s order by s.id, c.id", (variant,))
+
+    # ------------------------------------------------------------ company names
+    def tickers_with_names(self, symbols: Sequence[str]) -> set[str]:
+        rows = self.query("select symbol from tickers where symbol = any(%s) and coalesce(name, '') <> ''",
+                          (list(symbols),))
+        return {r["symbol"] for r in rows}
+
+    def ticker_names(self, symbols: Sequence[str]) -> dict[str, str]:
+        rows = self.query("select symbol, name from tickers where symbol = any(%s) and coalesce(name, '') <> ''",
+                          (list(symbols),))
+        return {r["symbol"]: r["name"] for r in rows}

@@ -102,6 +102,15 @@ HAPPY = [call("get_features"), call("search_knowledge", query="demand and guidan
     ("Margins expanded to 31%.", [0.276], ["31%"]),
     ("Q3 2026 results; S&P 500 member; 3 segments; 10-K risks.", [], []),
     ("EPS of $8.97 and growth of 22.5%", [8.97], ["22.5%"]),
+    # period labels are months, not millions
+    ("Strong 3m momentum and 1m, 6M and 12m returns.", [], []),
+    ("Up 4.5% over 3m.", [0.045], []),
+    # ... but money and non-period amounts are still checked
+    ("A $3m grant.", [], ["$3m"]),
+    ("Backlog of 3.5m units.", [], ["3.5m"]),
+    ("Sold 250m shares.", [], ["250m"]),
+    ("Raised 3 m in fees.", [], ["3 m"]),
+    ("A $3m grant.", [3e6], []),
 ])
 def test_unsupported_numbers(text, sources, bad):
     assert unsupported_numbers(text, sources) == bad

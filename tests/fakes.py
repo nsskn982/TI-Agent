@@ -140,10 +140,10 @@ class FakeStore:
         return len(rows)
 
     # ---------------------------------------------------------------- phase 3
-    def start_agent_run(self, as_of, model):
+    def start_agent_run(self, as_of, model, variant="full"):
         self.__dict__.setdefault("agent_runs", {})
         run_id = len(self.agent_runs) + 1
-        self.agent_runs[run_id] = {"as_of": as_of, "model": model, "status": "running"}
+        self.agent_runs[run_id] = {"as_of": as_of, "model": model, "status": "running", "variant": variant}
         return run_id
 
     def finish_agent_run(self, run_id, status, error=None):
@@ -153,7 +153,11 @@ class FakeStore:
         self.__dict__.setdefault("tool_calls", []).append(row)
 
     def upsert_suggestion(self, row):
-        self.__dict__.setdefault("suggestions", {})[(row["ticker"], row["horizon"], row["as_of"])] = row
+        row = {"variant": "full", **row}
+        key = (row["ticker"], row["horizon"], row["as_of"])
+        if row["variant"] != "full":  # evaluation baselines sit beside the system's own views
+            key += (row["variant"],)
+        self.__dict__.setdefault("suggestions", {})[key] = row
 
     def get_document_meta(self, ids):
         return {i: {"id": i, "title": self.documents[i].get("title"), "url": self.documents[i].get("url")}

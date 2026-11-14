@@ -1,4 +1,4 @@
-# Architecture: Phases 1 and 2
+# Architecture
 
 This document describes how TI Agent's data and knowledge layers work (modules M1–M5) and why they
 are built this way. Numbers in square brackets, such as [[3]](references.md#ref-3), point to the
@@ -301,10 +301,54 @@ The Flutter app can't reach the laptop, so every run exports what it shows into 
 file on GitHub Pages ([orchestration/export_app.py](../orchestration/export_app.py)): AES-256-GCM with a
 PBKDF2-SHA256 key. The app decrypts it in the browser; nothing runs online.
 
+## 8a. M10 evaluation ([evaluation/](../evaluation/))
+
+The evaluation answers one question: **does the agent add anything over the screen it starts from?**
+The protocol, including the primary analysis, was fixed in the paper ([paper/](paper/), section 8) before
+any outcome closed, so the result can't be chosen after the fact.
+
+- **Outcomes** ([evaluation/outcomes.py](../evaluation/outcomes.py)): excess return over SPY at 21, 63 and
+  252 trading days. Entry is the first trading day on or after the view's as-of date; adjusted closes are
+  used. A bullish view is a *hit* if the stock beats SPY, and a bearish view if it trails it. Neutral views
+  have no direction, so they are left out of hit rates but kept in the calibration and excess-return
+  tables. 1–3 month views are judged at 63 days and 6–24 month views at 252. Each pair is scored once,
+  when its window closes, and stored in `performance` (with entry and exit dates).
+- **Comparators** (`baseline_outcomes`):
+  - `screen_picks`: the top 20, all treated as bullish.
+  - `random_quality`: a random sample of quality-passing stocks of the same size, seeded by date so it can be reproduced.
+  - `quality_universe`: every quality-passing stock.
+  - `no_retrieval`: the same agent and prompt on the same picks with `search_knowledge` removed and sources
+    forced empty. It is stored as `variant = 'no_retrieval'` in `agent_runs` and `suggestions`. Everything
+    the app and the dashboard read filters `variant = 'full'`.
+- **Metrics** ([evaluation/metrics.py](../evaluation/metrics.py)):
+  - hit rate, with a one-sided binomial test;
+  - mean bullish, bearish and long-minus-short excess return, with **week-block bootstrap** intervals,
+    since views from the same week share one market move;
+  - paired differences against each comparator, by week;
+  - **calibration** of `confidence`: Brier score, reliability bins and ECE [[22]](references.md#ref-22);
+  - **citation faithfulness**: two annotators label sampled (claim, passage) pairs, and agreement is
+    measured with Cohen's κ [[15]](references.md#ref-15).
+- **Report** ([evaluation/run.py](../evaluation/run.py)): `reports/evaluation.md` and `.json`. It runs at
+  the end of every weekly screen, after the price refresh. It stays marked *preliminary* until 12 weeks have
+  closed at 63 days.
+
+## 8b. Company names
+
+`tickers.name` is filled from the weekly screen's Wikipedia list. The daily refresh writes the SEC
+registrant name only when no name is stored (`Store.tickers_with_names`), so `VALERO ENERGY CORP/TX` no
+longer replaces `Valero Energy`. For display, `company_name()` ([common/text.py](../common/text.py)) does
+two things:
+
+- drops a trailing state suffix such as `/DE/`;
+- title-cases all-caps names, but keeps acronyms (words without vowels, or a short known list) in capitals:
+  `HF SINCLAIR CORP` → `HF Sinclair Corp`.
+
+The dashboard uses it directly. The export writes `names` into `data.json` for the app.
+
 ## 9. Later phases (planned)
 
 | Phase | Module | Approach | References |
 |---|---|---|---|
 | P5 | M7 portfolio | QAOA on a binary asset-selection problem (QUBO), compared with classical solvers | QAOA [[19]](references.md#ref-19), QAOA portfolio benchmark [[20]](references.md#ref-20) |
 | P5 | M7 regime classifier | Quantum-kernel SVM on macro and price features | Havlíček et al. [[21]](references.md#ref-21) |
-| P5 | M10 evaluation | Hit rate, excess return, **calibration** of `confidence`, citation faithfulness | Guo et al. [[22]](references.md#ref-22), Gao et al. [[15]](references.md#ref-15) |
+| P5 | M10 evaluation | **Built** (§8a); collecting data until 12 weeks close | Guo et al. [[22]](references.md#ref-22), Gao et al. [[15]](references.md#ref-15) |

@@ -1,5 +1,5 @@
 {% extends "dashboard/base.html" %}{% load ti %}
-{% block title %}{{ ticker }}{% endblock %}
+{% block title %}{{ ticker }}{% if name %} · {{ name }}{% endif %}{% endblock %}
 {% block head %}
 <style>
 .chart-card { padding: 16px 16px 8px; }
@@ -15,7 +15,7 @@ details.table-view summary { cursor: pointer; color: var(--ink-2); }
 {% endblock %}
 {% block content %}
 <p class="muted" style="margin:0 0 8px"><a href="{% url 'home' %}">← All suggestions</a></p>
-<h1>{{ ticker }}</h1>
+<h1>{{ ticker }}{% if name %} <span class="muted" style="font-weight:500">· {{ name }}</span>{% endif %}</h1>
 <p class="sub">Last close {{ features.price.last_close|num:2 }} on {{ features.price.last_date|default:"–" }} · stance is relative to {{ bench }}</p>
 
 <section class="card chart-card" aria-labelledby="chart-title">

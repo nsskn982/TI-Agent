@@ -290,6 +290,11 @@ class _Tile extends StatelessWidget {
             Text('#${c.pick!.rank}',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: TiColors.ink2(context))),
         ]),
+        if (c.name != null)
+          Text(c.name!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: TiColors.ink2(context))),
         if (c.pick != null)
           Padding(
             padding: const EdgeInsets.only(top: 2),
@@ -350,6 +355,12 @@ class _TickerScene extends StatelessWidget {
                       ),
                     ),
                   ]),
+                  if (c.name != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(c.name!,
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500, color: TiColors.ink2(context))),
+                    ),
                 ]),
               ),
             ),
@@ -360,7 +371,8 @@ class _TickerScene extends StatelessWidget {
           alignment: Alignment.centerRight,
           child: TextButton.icon(
             onPressed: () => Navigator.of(context)
-                .push(MaterialPageRoute<void>(builder: (_) => TickerScreen(ticker: c.ticker, data: data))),
+                .push(MaterialPageRoute<void>(
+                    builder: (_) => TickerScreen(ticker: c.ticker, name: c.name, data: data))),
             icon: const Icon(Icons.show_chart),
             label: const Text('Chart and history'),
           ),

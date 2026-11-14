@@ -17,7 +17,10 @@ class _TickerData {
 
 /// One ticker: 12-month chart against the benchmark (both indexed to 100) and its suggestion history.
 class TickerScreen extends StatefulWidget {
-  const TickerScreen({super.key, required this.ticker, required this.data, this.benchmark = AppConfig.benchmark});
+  const TickerScreen(
+      {super.key, required this.ticker, required this.data, this.name, this.benchmark = AppConfig.benchmark});
+
+  final String? name; // company name for the title, when known
 
   final String ticker;
   final String benchmark;
@@ -44,7 +47,7 @@ class _TickerScreenState extends State<TickerScreen> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.ticker)),
+      appBar: AppBar(title: Text(widget.name == null ? widget.ticker : '${widget.ticker} · ${widget.name}')),
       body: FutureBuilder<_TickerData>(
         future: _future,
         builder: (context, snap) {

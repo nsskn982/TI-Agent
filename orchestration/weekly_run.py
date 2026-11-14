@@ -2,6 +2,11 @@
 
     python -m orchestration.weekly_run
     python -m orchestration.weekly_run --tickers AAPL --no-telegram
+    python -m orchestration.weekly_run --variant no_retrieval     # evaluation baseline (M10)
+
+The no_retrieval variant answers the same picks without document search or citations, as a
+baseline for the evaluation. Its views are stored apart from the system's own: no Telegram, no app
+export, not shown on the dashboard.
 
 Exit code 0 = every ticker got both suggestions; 1 = partial; 2 = nothing produced.
 """
@@ -19,19 +24,20 @@ log = logging.getLogger("weekly_run")
 
 
 def run(tickers: list[str], as_of: date, store, retriever, llm, notify=None,
-        max_steps: int = 12, retries: int = 1) -> tuple[str, list, dict[str, str]]:
+        max_steps: int = 12, retries: int = 1, variant: str = "full") -> tuple[str, list, dict[str, str]]:
     from agent.agent import AgentResult, run_ticker
     from agent.llm import LLMError
     from agent.tools import ToolContext
 
-    run_id = store.start_agent_run(as_of.isoformat(), llm.model)
+    run_id = (store.start_agent_run(as_of.isoformat(), llm.model, variant) if variant != "full"
+              else store.start_agent_run(as_of.isoformat(), llm.model))
     results: list[AgentResult] = []
     failures: dict[str, str] = {}
     try:
         for t in tickers:
             with progress.step(t) as st:
                 res = _run_one(t, tickers, as_of, store, retriever, llm, run_id, max_steps, retries, st,
-                               run_ticker, AgentResult, LLMError, ToolContext)
+                               run_ticker, AgentResult, LLMError, ToolContext, variant)
             results.append(res)
             if not res.complete:
                 failures[t] = res.error or "incomplete"
@@ -54,7 +60,7 @@ def run(tickers: list[str], as_of: date, store, retriever, llm, notify=None,
 
 
 def _run_one(t, tickers, as_of, store, retriever, llm, run_id, max_steps, retries, st,
-             run_ticker, AgentResult, LLMError, ToolContext):
+             run_ticker, AgentResult, LLMError, ToolContext, variant="full"):
     """One ticker, with up to `retries` retries. Updates its progress step as tools are called."""
     rejected = 0
 
@@ -70,7 +76,7 @@ def _run_one(t, tickers, as_of, store, retriever, llm, run_id, max_steps, retrie
         # A retry keeps horizons already saved, so it only has to produce what's missing.
         ctx = ToolContext(store=store, retriever=retriever, ticker=t, as_of=as_of, run_id=run_id,
                           model=llm.model, allowed_tickers=set(tickers), on_call=on_call,
-                          saved=dict(res.saved) if res else {})
+                          saved=dict(res.saved) if res else {}, variant=variant)
         try:
             res = run_ticker(llm, ctx, max_steps=max_steps)
         except LLMError as exc:
@@ -97,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Backtest date. The LLM's own training data may still leak hindsight.")
     p.add_argument("--max-steps", type=int, default=16)  # room for the longer write-up and one or two fixes
     p.add_argument("--no-telegram", action="store_true")
+    p.add_argument("--variant", choices=("full", "no_retrieval"), default="full",
+                   help="no_retrieval: evaluation baseline without document search (no Telegram, no export)")
     args = p.parse_args(argv)
+    baseline = args.variant != "full"
 
     from agent.llm import LLMError, OllamaClient
     from common.store import Store
@@ -105,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     from processing.embed import Embedder
     from retrieval.search import Retriever
 
-    notify = None if args.no_telegram else telegram.send
+    notify = None if (args.no_telegram or baseline) else telegram.send
     store = Store()
     # Default: this week's S&P 500 screen picks, best first (watchlist.txt before the first screen).
     tickers = load_watchlist(args.tickers)
@@ -115,7 +124,10 @@ def main(argv: list[str] | None = None) -> int:
         tickers = focus_tickers(store, tickers)
 
     llm = OllamaClient()
-    with progress.workflow(f"Weekly AI run · {len(tickers)} picks", ["Load AI model", "Load search models", *tickers, "Export app data"]):
+    title = f"Weekly AI run · {len(tickers)} picks" + (" · baseline without search" if baseline else "")
+    steps = ["Load AI model"] + ([] if baseline else ["Load search models"]) + tickers + (
+        [] if baseline else ["Export app data"])
+    with progress.workflow(title, steps):
         try:
             with progress.step("Load AI model") as st:
                 llm.check()
@@ -129,18 +141,22 @@ def main(argv: list[str] | None = None) -> int:
                 notify(f"TI Agent weekly run could not start: {exc}")
             return 2
         try:
-            with progress.step("Load search models"):
-                retriever = Retriever(store, Embedder())
-            log.info("Analysing %d tickers: %s", len(tickers), ", ".join(tickers))
-            status, _, failures = run(tickers, args.as_of, store, retriever, llm, notify, max_steps=args.max_steps)
+            retriever = None
+            if not baseline:
+                with progress.step("Load search models"):
+                    retriever = Retriever(store, Embedder())
+            log.info("Analysing %d tickers (%s): %s", len(tickers), args.variant, ", ".join(tickers))
+            status, _, failures = run(tickers, args.as_of, store, retriever, llm, notify, max_steps=args.max_steps,
+                                      variant=args.variant)
         finally:
             llm.unload()  # ~6 GB back to Windows right away, not 30 minutes later
-        try:  # this week's views for the app (site-data/data.json; push it to publish)
-            from orchestration.export_app import export_if_configured
+        if not baseline:
+            try:  # this week's views for the app (site-data/data.json; push it to publish)
+                from orchestration.export_app import export_if_configured
 
-            export_if_configured(store)
-        except Exception:
-            log.exception("App data export failed")
+                export_if_configured(store)
+            except Exception:
+                log.exception("App data export failed")
     log.info("Weekly run finished: %s (%d failures)", status, len(failures))
     return {"ok": 0, "partial": 1}.get(status, 2)
 

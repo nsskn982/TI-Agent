@@ -33,7 +33,9 @@ class Suggestion(BaseModel):
     catalysts: list[str] = Field(min_length=1, max_length=4)
     valuation: str = Field(min_length=20, max_length=600)
     risks: list[str] = Field(min_length=1, max_length=5)
-    sources: list[str] = Field(min_length=1, max_length=8)
+    # At least one citation is required for the full system (enforced in agent/tools.py); the
+    # no-retrieval evaluation baseline has nothing to cite.
+    sources: list[str] = Field(default_factory=list, max_length=8)
     confidence: float = Field(ge=0, le=1)
     as_of: date
 
@@ -140,6 +142,16 @@ def source_numbers(texts: list[str]) -> list[float]:
     return out
 
 
+MAX_PERIOD_MONTHS = 60
+
+
+def _is_period_label(m: re.Match, dollar: str | None, raw: str, unit: str) -> bool:
+    """'1m', '3m', '6M', '12m': a whole number written against 'm' with no '$' is a look-back period
+    in months (the features are named ret_3m, rel_6m, ...). '$3m', '3.5m', '3 m', '250m' stay millions."""
+    return (unit == "m" and not dollar and raw.isdigit() and int(raw) <= MAX_PERIOD_MONTHS
+            and m.group(0).rstrip() == raw + m.group(3))
+
+
 def unsupported_numbers(text: str, sources: list[float]) -> list[str]:
     """Numeric claims in `text` that don't match any number a tool returned."""
     bad = []
@@ -147,6 +159,8 @@ def unsupported_numbers(text: str, sources: list[float]) -> list[str]:
         dollar, raw, unit = m.group(1), m.group(2), (m.group(3) or "").lower()
         if not (dollar or unit or "." in raw):
             continue
+        if _is_period_label(m, dollar, raw, unit):
+            continue  # "3m momentum" means three months, not three million
         value = abs(float(raw.replace(",", "")))
         decimals = len(raw.split(".")[1]) if "." in raw else 0
         tol = 0.5 * 10 ** -decimals + 1e-9

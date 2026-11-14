@@ -17,7 +17,7 @@ Everything runs on **your own laptop** with **free tools**: a local PostgreSQL +
    - [The weekly stock screen (choosing what to analyse)](#the-weekly-stock-screen-choosing-what-to-analyse)
    - [Phase 3: Agent (the AI analyst)](#phase-3-agent-the-ai-analyst)
    - [Phase 4: App (showing the results)](#phase-4-app-showing-the-results)
-   - [Phase 5: Quantum and evaluation (planned)](#phase-5-quantum-and-evaluation-planned)
+   - [Phase 5: Evaluation (built, collecting data) and quantum (planned)](#phase-5-evaluation-built-collecting-data-and-quantum-planned)
 3. [Data lifecycle: first run, refreshes, retention](#data-lifecycle-first-run-refreshes-retention)
 4. [Setup](#setup)
 5. [Running it every week](#running-it-every-week)
@@ -64,7 +64,7 @@ tests swap the database for an in-memory fake ([tests/fakes.py](tests/fakes.py))
 | M7 | Portfolio + quantum | `portfolio/` (planned) | 5 |
 | M8 | Orchestration | [orchestration/](orchestration/), `run_*.cmd` | 1–3 |
 | M9 | Delivery: Telegram, website, app | [delivery/](delivery/), [web/](web/), [app/](app/) | 3–4 |
-| M10 | Evaluation | `evaluation/` (planned) | 5 |
+| M10 | Evaluation | [evaluation/](evaluation/) | 5 |
 
 ---
 
@@ -222,9 +222,11 @@ model needs about 5 GB of free memory.
 **Goal:** let the people you choose read the results on the web and on their phones.
 
 - **Flutter app** ([app/](app/)), one codebase for web, Android and iOS:
-  - **Home:** this week's picks in rank order, each with its daily figures and why it made the list.
-  - **Compare:** a sortable table of all picks.
-  - **Ticker pages:** a chart vs the S&P 500, suggestion history, and the cited passages.
+  - **Home:** this week's picks in rank order, each with its company name, daily figures and why it made the list.
+  - **Compare:** a sortable table of all picks, with ticker and company name.
+  - **Ticker pages:** "TICKER · Company name", a chart vs the S&P 500, suggestion history, and the cited passages.
+  - **Company names** come from the screen's Wikipedia constituent list. SEC registrant names only fill gaps,
+    tidied for display (`ABERCROMBIE & FITCH CO /DE/` → `Abercrombie & Fitch Co`).
   - The web build is published on **GitHub Pages** by [.github/workflows/app.yml](.github/workflows/app.yml),
     which also builds an Android APK.
 - **Encrypted data file** ([orchestration/export_app.py](orchestration/export_app.py)): GitHub Pages hosts
@@ -238,19 +240,45 @@ model needs about 5 GB of free memory.
 
 **Gate:** testers with the password use the app for 2 weeks.
 
-### Phase 5: Quantum and evaluation (planned)
+### Phase 5: Evaluation (built, collecting data) and quantum (planned)
 
-- **M7 Portfolio + quantum:** turn the suggestions into portfolio weights and compare a classical
-  mean-variance optimiser against **QAOA** on a quantum simulator (Qiskit / PennyLane). Results go to `portfolio_runs`.
-- **M10 Evaluation:** score every past suggestion against what actually happened:
-  - hit rate at 1, 3 and 12 months
-  - excess return vs SPY
-  - calibration (higher confidence should mean a higher hit rate)
-  - citation faithfulness (claims match their sources)
+**M10 Evaluation** ([evaluation/](evaluation/)) scores every past view against what actually happened, following the
+protocol in the paper ([docs/paper](docs/paper/), section 8). It runs at the end of every weekly screen and is incremental:
+each view is scored once, when its window has closed.
 
-  Results go to `performance`.
+- **Outcomes:** excess return over SPY at 21, 63 and 252 trading days. Entry is the first trading day on or after the
+  view's date; adjusted closes, so dividends count. Stored in `performance`.
+- **Comparators,** scored the same way so the agent can be told apart from the screen it starts from:
 
-**Gate:** a report benchmarking quantum vs classical (objective value and runtime).
+  | Comparator | What it is |
+  |---|---|
+  | `screen_picks` | The week's top 20, all treated as bullish |
+  | `random_quality` | A seeded random sample of the same size from quality-passing stocks |
+  | `quality_universe` | Every quality-passing stock |
+  | `no_retrieval` | The agent on the same picks without document search (optional weekly run) |
+
+- **Metrics:** hit rate with a binomial test; bullish, bearish and long-minus-short excess return with week-block bootstrap
+  intervals; calibration of the stated confidence (Brier score, reliability bins, ECE); citation faithfulness from two
+  annotators, with Cohen's κ.
+- **Report:** `reports/evaluation.md` (and `.json`). The **primary analysis** is the 1–3 month views at 63 trading days,
+  once **12 weeks** have closed: about five to six months of weekly runs.
+- **Status (2026-11-14):** week 1 is saved for both variants (40 full views, 40 no-retrieval views). They agree on
+  13 of 20 stances per horizon (κ = 0.07 for 1–3 months, 0.32 for 6–24 months). No outcome has closed yet; see
+  [docs/progress.md](docs/progress.md).
+
+```powershell
+.venv\Scripts\python -m evaluation.run                         # score what has closed, write the report
+.venv\Scripts\python -m evaluation.faithfulness sample --n 60  # annotation sheet (evaluation/annotations/)
+.venv\Scripts\python -m evaluation.faithfulness score evaluation\annotations\<file>.csv
+run_weekly.cmd --variant no_retrieval --no-telegram            # the no-search baseline, by hand
+```
+
+Annotation sheets quote news and filing text, so they stay out of git.
+
+**M7 Portfolio + quantum (planned):** turn the views into portfolio weights and compare a classical mean-variance
+optimiser against **QAOA** on a quantum simulator (Qiskit / PennyLane). Results go to `portfolio_runs`.
+
+**Gate:** the primary evaluation is complete, and a report benchmarks quantum vs classical (objective value and runtime).
 
 ---
 
@@ -347,7 +375,7 @@ Recommended Ollama settings for 6 GB of VRAM (`setup.ps1` sets them): `OLLAMA_FL
 Register the jobs once:
 
 ```powershell
-.\scripts\register_tasks.ps1        # -Unregister removes them; times are parameters
+.\scripts\register_tasks.ps1        # -WithBaseline adds the evaluation baseline; -Unregister removes them
 ```
 
 | Task | When (local time) | Script | Does |
@@ -355,6 +383,9 @@ Register the jobs once:
 | TI-Agent daily refresh | Weekdays 23:45 | `run_daily.cmd` | New prices, news, filings, fundamentals, macro → chunk, embed, score |
 | TI-Agent weekly screen | Saturday 01:30 | `run_screen.cmd` | Screen ~900 stocks → top 20, backfill new picks, retention |
 | TI-Agent weekly run | Saturday 09:00 | `run_weekly.cmd` | AI suggestions for the picks → Telegram digest |
+| TI-Agent weekly baseline (optional, `-WithBaseline`) | Saturday 10:30 | `run_weekly.cmd --variant no_retrieval` | The same picks without document search, for the evaluation; never published |
+
+The weekly screen also scores past views whose window has closed and updates `reports/evaluation.md`.
 
 - Each script starts Docker Desktop and the database container if they aren't running.
 - Each script writes to `logs\` (`daily_run.log`, `screen_run.log`, `weekly_run.log`).
@@ -406,8 +437,8 @@ For local app development, copy [app/config.example.json](app/config.example.jso
 
 | Page | Shows |
 |---|---|
-| `/` | Scroll story of this week's picks: both views per ticker, marked **New** / **Changed from …** |
-| `/t/<ticker>/` | 12-month chart vs the benchmark, the features the agent saw, suggestion history |
+| `/` | Scroll story of this week's picks with company names: both views per ticker, marked **New** / **Changed from …** |
+| `/t/<ticker>/` | "TICKER · Company name", 12-month chart vs the benchmark, the features the agent saw, suggestion history |
 | `/c/<chunk_id>/` | The exact cited passage, with a link to the original filing or article |
 | `/status/` | Roadmap gates, agent runs, ingestion and processing runs |
 
@@ -452,6 +483,8 @@ TI-Agent/
 ├── retrieval/       M5 hybrid search + evaluation queries
 ├── agent/           M6 tools, agent loop, schema checks, prompts
 ├── orchestration/   M8 weekly_run.py, screen_run.py, retention.py
+├── evaluation/      M10 outcomes, metrics, scoring + report (run.py), citation faithfulness
+├── reports/         evaluation report (evaluation.md / .json), written by every weekly screen
 ├── delivery/        M9 Telegram
 ├── web/             M9 Django dashboard (local only)
 ├── app/             M9 Flutter app
@@ -479,6 +512,8 @@ TI-Agent/
 - [docs/architecture.md](docs/architecture.md): how each module works and why, with citations
 - [docs/security.md](docs/security.md): threat model and security review
 - [docs/references.md](docs/references.md) ([BibTeX](docs/references.bib)): the 22 papers the design builds on
+- [docs/report/](docs/report/): technical report (LaTeX, TikZ figures, screenshots) covering the whole build
+- [docs/paper/](docs/paper/): journal-style paper (elsarticle) with the pre-registered evaluation protocol
 - [app/README.md](app/README.md): Flutter app development
 
 ### Key references

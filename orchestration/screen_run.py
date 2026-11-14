@@ -180,11 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skip-refresh", action="store_true", help="Don't download; screen stored data")
     p.add_argument("--no-backfill", action="store_true")
     p.add_argument("--keep-old", action="store_true", help="Skip the retention step (keep old data)")
+    p.add_argument("--no-eval", action="store_true", help="Skip scoring past views (M10 evaluation)")
     args = p.parse_args(argv)
 
     steps = ([] if args.skip_refresh else ["Index members", "Prices", "SEC fundamentals"]) + [
         f"Rank + pick top {args.top_n}"] + ([] if args.no_backfill else [
-            "News", "Filings", "Load models", "Chunk + embed", "News sentiment"]) + ([] if args.keep_old else ["Retention"]) + [
+            "News", "Filings", "Load models", "Chunk + embed", "News sentiment"]) + ([] if args.keep_old else ["Retention"]) + (
+        [] if args.no_eval else ["Refresh prices", "Score views", "Score baselines", "Write report"]) + [
         "Export app data"]
     with progress.workflow("Weekly screen", steps):
         return _run(args)
@@ -233,6 +235,14 @@ def _run(args) -> int:
             except Exception as exc:
                 errors.append({"source": "retention", "key": "prune", "error": f"{type(exc).__name__}: {exc}"[:300]})
                 st.problem()
+
+    if not args.no_eval:  # score past views whose horizon has closed (prices are fresh now)
+        try:
+            from evaluation.run import evaluate
+
+            evaluate(store)
+        except Exception as exc:
+            errors.append({"source": "evaluation", "key": "M10", "error": f"{type(exc).__name__}: {exc}"[:300]})
 
     try:  # the app shows the new picks (site-data/data.json; push it to publish)
         from orchestration.export_app import export_if_configured

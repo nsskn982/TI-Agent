@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from agent.tools import TOOL_SPECS, ToolContext
+from agent.tools import NO_RETRIEVAL_NOTE, ToolContext, tool_specs
 
 log = logging.getLogger(__name__)
 
@@ -70,14 +70,14 @@ def _wire(messages: list[dict]) -> list[dict]:
 def run_ticker(llm, ctx: ToolContext, max_steps: int = 12, max_tool_calls: int = 16) -> AgentResult:
     result = AgentResult(ticker=ctx.ticker)
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + (NO_RETRIEVAL_NOTE if ctx.variant == "no_retrieval" else "")},
         {"role": "user", "content": user_prompt(ctx.ticker, ctx.as_of)},
     ]
     budget = int(getattr(llm, "num_ctx", 8192) * 0.75)  # leave room for the reply
 
     while result.steps < max_steps and ctx.missing_horizons():
         fit_context(messages, budget)
-        reply = llm.chat(_wire(messages), TOOL_SPECS)
+        reply = llm.chat(_wire(messages), tool_specs(ctx.variant))
         result.steps += 1
         ctx.step = result.steps
         calls = reply.get("tool_calls") or []

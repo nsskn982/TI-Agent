@@ -15,6 +15,9 @@ abstract class DataSource {
 
   /// Latest daily close and recent move for each ticker (last ~2 weeks of rows).
   Future<Map<String, Quote>> latestQuotes(List<String> tickers);
+
+  /// Company names by ticker ("ANF" -> "Abercrombie & Fitch"); missing ones are left out.
+  Future<Map<String, String>> companyNames();
 }
 
 /// Reads the decrypted data file (see vault.dart and orchestration/export_app.py).
@@ -74,6 +77,12 @@ class BundleDataSource implements DataSource {
       };
 
   @override
+  Future<Map<String, String>> companyNames() async => {
+        for (final e in ((d['names'] as Map?) ?? const {}).entries)
+          if (e.value != null) e.key.toString(): e.value.toString(),
+      };
+
+  @override
   Future<ScreenResult> latestScreen() async {
     final s = Map<String, dynamic>.from((d['screen'] as Map?) ?? const {});
     if (s['as_of'] == null) return const ScreenResult();
@@ -87,9 +96,10 @@ class BundleDataSource implements DataSource {
 
 /// One ticker's two views for the week, plus its place in the S&P 500 screen.
 class TickerViews {
-  const TickerViews(this.ticker, {this.medium, this.long, this.pick});
+  const TickerViews(this.ticker, {this.medium, this.long, this.pick, this.name});
 
   final String ticker;
+  final String? name; // company name, e.g. "Abercrombie & Fitch"
   final Suggestion? medium;
   final Suggestion? long;
   final ScreenPick? pick;
@@ -126,7 +136,8 @@ void markChanges(List<Suggestion> current, Map<String, Stance> previous) {
 }
 
 /// One card per ticker: best screen rank first, then alphabetical for anything unranked.
-List<TickerViews> groupByTicker(List<Suggestion> rows, [Map<String, ScreenPick> picks = const {}]) {
+List<TickerViews> groupByTicker(List<Suggestion> rows,
+    [Map<String, ScreenPick> picks = const {}, Map<String, String> names = const {}]) {
   final by = <String, Map<String, Suggestion>>{};
   for (final s in rows) {
     (by[s.ticker] ??= {})[s.horizon] = s;
@@ -137,7 +148,8 @@ List<TickerViews> groupByTicker(List<Suggestion> rows, [Map<String, ScreenPick> 
       return ra != rb ? ra.compareTo(rb) : a.compareTo(b);
     });
   return [
-    for (final t in tickers) TickerViews(t, medium: by[t]!['medium'], long: by[t]!['long'], pick: picks[t]),
+    for (final t in tickers)
+      TickerViews(t, medium: by[t]!['medium'], long: by[t]!['long'], pick: picks[t], name: names[t]),
   ];
 }
 
@@ -157,7 +169,13 @@ Future<HomeData> loadHome(DataSource ds) async {
   } catch (_) {
     screen = const ScreenResult(); // no screen yet (or table not created): plain alphabetical list
   }
-  final cards = groupByTicker(rows, screen.picks);
+  Map<String, String> names;
+  try {
+    names = await ds.companyNames();
+  } catch (_) {
+    names = const {}; // names are a nicety; never block the suggestions
+  }
+  final cards = groupByTicker(rows, screen.picks, names);
   Map<String, Quote> quotes;
   try {
     quotes = await ds.latestQuotes([for (final c in cards) c.ticker]);

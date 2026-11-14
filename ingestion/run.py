@@ -94,9 +94,14 @@ def ingest(tickers: list[str], days: int, sources: tuple[str, ...], store, dry_r
     # The benchmark (SPY) gets prices only, for beta/relative strength and M10 scoring.
     bench = benchmark()
     price_tickers = tickers + ([bench] if bench not in tickers else [])
+    # Names: keep a stored one (the weekly screen stores Wikipedia's clean names); SEC's registrant
+    # name ("VALERO ENERGY CORP/TX") only fills a gap.
+    named = store.tickers_with_names(price_tickers) if store is not None and hasattr(store, "tickers_with_names") \
+        else set()
     ticker_rows = [
         {"symbol": t, "active": t in tickers}
-        | ({"name": cik_map.get(t, {}).get("name"), "cik": cik_map.get(t, {}).get("cik")} if cik_map else {})
+        | ({"cik": cik_map.get(t, {}).get("cik")} if cik_map else {})
+        | ({"name": cik_map.get(t, {}).get("name")} if cik_map and t not in named else {})
         for t in price_tickers
     ]
     if not dry_run:

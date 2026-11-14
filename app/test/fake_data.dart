@@ -16,8 +16,11 @@ Map<String, dynamic> sugJson(String ticker, String horizon, String stance,
       'as_of': '2026-11-11',
     };
 
-/// In-memory stand-in for the laptop API.
+/// In-memory stand-in for the decrypted data file.
 class FakeData implements DataSource {
+  @override
+  Future<Map<String, String>> companyNames() async => const {'AAPL': 'Apple Inc.', 'MSFT': 'Microsoft'};
+
   FakeData({this.previous = const [], this.screen = const ScreenResult()});
 
   final List<Map<String, dynamic>> previous;

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from common import logging_setup, progress
 from common.config import ROOT, benchmark, env
+from common.text import company_name
 
 log = logging.getLogger("export_app")
 
@@ -95,6 +96,8 @@ def build_bundle(store, today: date | None = None) -> dict:
         "prices": prices,
         "citations": citations,
         "benchmark": bench,
+        "names": {t: company_name(n) for t, n in (store.ticker_names(tickers + [bench]).items()
+                                                  if hasattr(store, "ticker_names") else [])},
     }
 
 

@@ -10,6 +10,7 @@ from django.http import Http404
 from django.shortcuts import render
 
 from common.config import benchmark
+from common.text import company_name
 from dashboard import repo as repo_mod
 
 log = logging.getLogger("dashboard")
@@ -46,7 +47,9 @@ def home(request):
     by_ticker: dict[str, dict] = defaultdict(dict)
     for s in rows:
         by_ticker[s["ticker"]][s["horizon"]] = s
-    cards = [{"ticker": t, "medium": h.get("medium"), "long": h.get("long")} for t, h in sorted(by_ticker.items())]
+    names = {t["symbol"]: company_name(t.get("name")) for t in repo.tickers()}
+    cards = [{"ticker": t, "name": names.get(t), "medium": h.get("medium"), "long": h.get("long")}
+             for t, h in sorted(by_ticker.items())]
     stances = [s["stance"] for s in rows]
     stats = {
         "tickers": len(cards), "views": len(rows),
@@ -61,7 +64,8 @@ def home(request):
 def ticker_detail(request, ticker: str):
     repo = repo_mod.get_repo()
     ticker = ticker.upper()
-    if ticker not in {t["symbol"] for t in repo.tickers()}:
+    names = {t["symbol"]: company_name(t.get("name")) for t in repo.tickers()}
+    if ticker not in names:
         raise Http404(f"{ticker} is not on the watchlist")
     bench = benchmark()
 
@@ -81,7 +85,7 @@ def ticker_detail(request, ticker: str):
     history = repo.ticker_suggestions(ticker)
     _attach_citations(repo, history)
     return render(request, "dashboard/ticker.html", {
-        "ticker": ticker, "bench": bench, "series": series, "features": feats,
+        "ticker": ticker, "name": names.get(ticker), "bench": bench, "series": series, "features": feats,
         "latest": {h: next((s for s in history if s["horizon"] == h), None) for h in ("medium", "long")},
         "history": history, "nav": "ticker",
     })

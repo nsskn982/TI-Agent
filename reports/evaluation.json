@@ -1,0 +1,398 @@
+{
+ "generated_at": "2026-11-14T20:42:19+00:00",
+ "views": {
+  "full/21": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  },
+  "full/63": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  },
+  "full/252": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  },
+  "no_retrieval/21": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  },
+  "no_retrieval/63": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  },
+  "no_retrieval/252": {
+   "scored": 0,
+   "hit_rate": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   },
+   "bullish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "bearish_excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "long_short": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "calibration": {
+    "n": 0,
+    "brier": null,
+    "ece": null,
+    "bins": []
+   }
+  }
+ },
+ "baselines": {
+  "screen_picks/21": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "screen_picks/63": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "screen_picks/252": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "random_quality/21": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "random_quality/63": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "random_quality/252": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "quality_universe/21": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "quality_universe/63": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  },
+  "quality_universe/252": {
+   "scored": 0,
+   "excess": {
+    "mean": null,
+    "lo": null,
+    "hi": null,
+    "weeks": 0,
+    "n": 0
+   },
+   "beat_benchmark": {
+    "n": 0,
+    "hits": 0,
+    "rate": null,
+    "p_value": null
+   }
+  }
+ },
+ "comparisons": {
+  "bullish_vs_screen_picks/21": {
+   "mean": null,
+   "lo": null,
+   "hi": null,
+   "weeks": 0,
+   "n": 0
+  },
+  "bullish_vs_screen_picks/63": {
+   "mean": null,
+   "lo": null,
+   "hi": null,
+   "weeks": 0,
+   "n": 0
+  },
+  "bullish_vs_screen_picks/252": {
+   "mean": null,
+   "lo": null,
+   "hi": null,
+   "weeks": 0,
+   "n": 0
+  }
+ },
+ "faithfulness": null,
+ "status": {
+  "weeks_with_views": 1,
+  "views_written": 40,
+  "primary_weeks_closed": 0,
+  "primary_weeks_required": 12,
+  "primary_ready": false
+ }
+}

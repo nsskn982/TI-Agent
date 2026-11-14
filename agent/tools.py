@@ -17,6 +17,11 @@ from pydantic import ValidationError
 from agent.schema import Suggestion, source_numbers, unsupported_numbers
 from quant import features
 
+VARIANTS = ("full", "no_retrieval")   # no_retrieval: evaluation baseline without search or citations
+NO_RETRIEVAL_NOTE = (
+    "\n\nThis is a run WITHOUT document search: search_knowledge is not available. Base both views only on "
+    "get_features, get_prices and get_macro, and leave `sources` as an empty list.")
+
 MAX_RESULT_CHARS = 3500
 SNIPPET_CHARS = 600
 
@@ -114,14 +119,18 @@ class ToolContext:
     results_text: list[str] = field(default_factory=list)
     saved: dict[str, dict] = field(default_factory=dict)
     step: int = 0
+    variant: str = "full"
 
     # ------------------------------------------------------------ dispatch
     def execute(self, name: str, args: dict | None) -> str:
         args = args or {}
         start = time.perf_counter()
         fn = getattr(self, f"_tool_{name}", None)
+        if self.variant == "no_retrieval" and name == "search_knowledge":
+            fn = None
         if fn is None:
-            result = f"ERROR: unknown tool {name!r}. Available: {[t['function']['name'] for t in TOOL_SPECS]}"
+            result = (f"ERROR: unknown tool {name!r}. "
+                      f"Available: {[t['function']['name'] for t in tool_specs(self.variant)]}")
         else:
             try:
                 result = fn(**args)
@@ -195,6 +204,10 @@ class ToolContext:
             return f"ERROR: invalid suggestion ({errs}). Fix it and call save_suggestion again."
 
         problems = []
+        if self.variant == "full" and not s.sources:
+            problems.append("sources must list at least one chunk id returned by search_knowledge")
+        if self.variant == "no_retrieval" and s.sources:
+            problems.append("this run has no document search: leave sources empty")
         unseen = [c for c in s.sources if c not in self.seen_citations]
         if unseen:
             problems.append(f"sources {unseen} were not returned by search_knowledge in this session")
@@ -205,7 +218,7 @@ class ToolContext:
         if problems:
             return "ERROR: " + " | ".join(problems) + ". Fix it and call save_suggestion again."
 
-        row = s.to_row(self.run_id, self.model)
+        row = {**s.to_row(self.run_id, self.model), "variant": self.variant}
         self.store.upsert_suggestion(row)
         self.saved[s.horizon] = row
         missing = self.missing_horizons()
@@ -213,3 +226,10 @@ class ToolContext:
 
     def missing_horizons(self) -> list[str]:
         return [h for h in ("medium", "long") if h not in self.saved]
+
+
+def tool_specs(variant: str = "full") -> list[dict]:
+    """The tools offered to the model; the no-retrieval baseline gets no search tool."""
+    if variant == "no_retrieval":
+        return [t for t in TOOL_SPECS if t["function"]["name"] != "search_knowledge"]
+    return TOOL_SPECS
