@@ -1,6 +1,6 @@
 # TI Agent evaluation
 
-Generated 2026-11-14T20:42:19+00:00. Excess returns are over the benchmark; intervals are 95% week-block bootstrap intervals. Protocol: docs/paper, section 8.
+Generated 2026-11-21T00:48:07+00:00. Excess returns are over the benchmark; intervals are 95% week-block bootstrap intervals. Protocol: docs/paper, section 8.
 
 ## Status
 
